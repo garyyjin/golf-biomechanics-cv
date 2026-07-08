@@ -1,0 +1,98 @@
+import { useState } from "react";
+import { analyzeVideo } from "./api";
+import type { AnalysisResponse, Handedness, View } from "./types";
+
+interface Props {
+  onAnalyzed: (file: File, analysis: AnalysisResponse) => void;
+}
+
+const VIEW_OPTIONS: { value: View; label: string }[] = [
+  { value: "face_on", label: "Face-on" },
+  { value: "down_the_line", label: "Down-the-line" },
+];
+
+const HANDEDNESS_OPTIONS: { value: Handedness; label: string }[] = [
+  { value: "right", label: "Right" },
+  { value: "left", label: "Left" },
+];
+
+export function UploadScreen({ onAnalyzed }: Props) {
+  const [file, setFile] = useState<File | null>(null);
+  const [view, setView] = useState<View | null>(null);
+  const [handedness, setHandedness] = useState<Handedness | null>(null);
+  const [processing, setProcessing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const ready = file !== null && view !== null && handedness !== null && !processing;
+
+  async function submit() {
+    if (!file || !view || !handedness) return;
+    setProcessing(true);
+    setError(null);
+    try {
+      const analysis = await analyzeVideo(file, view, handedness);
+      onAnalyzed(file, analysis);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Analysis failed");
+      setProcessing(false);
+    }
+  }
+
+  return (
+    <div className="upload">
+      <h1>Golf Swing Analyzer</h1>
+
+      <label className="field">
+        <span>Swing video (mp4, mov or webm)</span>
+        <input
+          type="file"
+          accept=".mp4,.mov,.webm,video/mp4,video/quicktime,video/webm"
+          disabled={processing}
+          onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+        />
+      </label>
+
+      <div className="field">
+        <span>Camera view</span>
+        <div className="toggle-group" role="radiogroup" aria-label="Camera view">
+          {VIEW_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              className={view === opt.value ? "toggle selected" : "toggle"}
+              aria-pressed={view === opt.value}
+              disabled={processing}
+              onClick={() => setView(opt.value)}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="field">
+        <span>Handedness</span>
+        <div className="toggle-group" role="radiogroup" aria-label="Handedness">
+          {HANDEDNESS_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              className={handedness === opt.value ? "toggle selected" : "toggle"}
+              aria-pressed={handedness === opt.value}
+              disabled={processing}
+              onClick={() => setHandedness(opt.value)}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <button type="button" className="submit" disabled={!ready} onClick={submit}>
+        {processing ? "Analyzing…" : "Analyze swing"}
+      </button>
+      {processing && <p className="hint">Extracting pose landmarks — this can take a moment.</p>}
+      {error && <p className="error">{error}</p>}
+    </div>
+  );
+}
