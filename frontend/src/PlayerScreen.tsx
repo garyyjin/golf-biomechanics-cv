@@ -22,6 +22,7 @@ export function PlayerScreen({ videoUrl, analysis, onReset }: Props) {
   const [duration, setDuration] = useState(0);
   const [time, setTime] = useState(0);
   const [lines, setLines] = useState<OverlayLine[]>([]);
+  const [hideVideo, setHideVideo] = useState(false);
 
   // Fixed address-frame references (sway line, swing plane) computed once
   // from the raw landmarks.
@@ -147,7 +148,7 @@ export function PlayerScreen({ videoUrl, analysis, onReset }: Props) {
   return (
     <div className="player">
       <div className="player-main">
-        <div className="video-box">
+        <div className={hideVideo ? "video-box hide-video" : "video-box"}>
           <video
             ref={videoRef}
             src={videoUrl}
@@ -178,7 +179,10 @@ export function PlayerScreen({ videoUrl, analysis, onReset }: Props) {
             </div>
           ))}
           {view === "down_the_line" && (
-            <p className="readout-note">Plane is a body-only approximation</p>
+            <p className="readout-note">
+              Plane is a body-only approximation — most accurate with the camera aligned to
+              the target line
+            </p>
           )}
         </aside>
       </div>
@@ -200,6 +204,14 @@ export function PlayerScreen({ videoUrl, analysis, onReset }: Props) {
         <span className="frame-label">
           frame {currentIndex + 1}/{frame_count}
         </span>
+        <button
+          type="button"
+          className={hideVideo ? "toggle selected" : "toggle"}
+          aria-pressed={hideVideo}
+          onClick={() => setHideVideo((v) => !v)}
+        >
+          Skeleton only
+        </button>
       </div>
 
       <p className="hint">Space: play/pause · ← →: step one frame</p>

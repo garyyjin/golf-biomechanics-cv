@@ -8,12 +8,15 @@ import type { Handedness, Landmark, PoseFrame, View } from "./types";
  * Endpoints are returned normalized (drawn like the skeleton), but every
  * angle is computed in aspect-correct space (x' = x * aspect, aspect =
  * video width / height) so normalized coordinates don't distort angles.
+ * z (MediaPipe's coarse, hip-relative depth) is used only in the horizontal
+ * angle term below, never for drawing — endpoints are still drawn from raw
+ * x/y.
  *
  * Sign conventions:
  * - Angle from vertical (spine): deg(atan2((top.x − bottom.x)·aspect,
  *   bottom.y − top.y)); positive = upper point leans toward +x on screen.
  * - Angle from horizontal (shoulders/hips/plane): endpoints ordered
- *   (lead, trail); deg(atan2(trail.y − lead.y, |trail.x − lead.x|·aspect));
+ *   (lead, trail); deg(atan2(trail.y − lead.y, hypot(|trail.x − lead.x|·aspect, dz)));
  *   positive = lead endpoint higher on screen than trail.
  */
 
@@ -28,6 +31,7 @@ export const RIGHT_HIP = 24;
 export interface Point {
   x: number;
   y: number;
+  z?: number;
 }
 
 export interface LineResult {
@@ -86,21 +90,31 @@ export function sideIndices(handedness: Handedness): SideIndices {
 }
 
 export function midpoint(a: Point, b: Point): Point {
-  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  const z = a.z !== undefined && b.z !== undefined ? (a.z + b.z) / 2 : undefined;
+  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, ...(z !== undefined ? { z } : {}) };
 }
 
 export function visiblePoint(landmarks: Landmark[], index: number): Point | null {
   const lm = landmarks[index];
   if (lm.visibility < VISIBILITY_THRESHOLD) return null;
-  return { x: lm.x, y: lm.y };
+  return { x: lm.x, y: lm.y, z: lm.z };
 }
 
 export function angleFromVerticalDeg(bottom: Point, top: Point, aspect: number): number {
+  // z is intentionally not used here: this term is signed (encodes left/right
+  // lean direction), and MediaPipe's z has no compatible sign convention with
+  // that — combining them would conflate forward/back lean with lateral tilt.
   return Math.atan2((top.x - bottom.x) * aspect, bottom.y - top.y) * DEG_PER_RAD;
 }
 
 export function angleFromHorizontalDeg(lead: Point, trail: Point, aspect: number): number {
-  return Math.atan2(trail.y - lead.y, Math.abs(trail.x - lead.x) * aspect) * DEG_PER_RAD;
+  // Folding in |dz| recovers some signal lost to foreshortening when the
+  // camera isn't perfectly perpendicular/parallel to the body's turn — a
+  // rotation partly "toward the camera" shows up in z even as screen-x
+  // shrinks. Safe because this term was already an unsigned run magnitude.
+  const dx = Math.abs(trail.x - lead.x) * aspect;
+  const dz = (trail.z ?? 0) - (lead.z ?? 0);
+  return Math.atan2(trail.y - lead.y, Math.hypot(dx, dz)) * DEG_PER_RAD;
 }
 
 /**
@@ -145,14 +159,25 @@ export function hipLine(
   return { a: lead, b: trail, angleDeg: angleFromHorizontalDeg(lead, trail, aspect) };
 }
 
-/** Lead hip x — the anchor for the fixed vertical sway-reference line. */
+/**
+ * Hip-midpoint x — the anchor for the fixed vertical sway-reference line.
+ * Uses the midpoint rather than the lead hip alone because hip rotation/turn
+ * during the swing moves a single hip landmark's screen-x even with zero
+ * true lateral sway and a perfectly perpendicular camera; averaging both
+ * hips is the standard "pelvis center" proxy. This damps some yaw-induced
+ * noise too, but can't fully cancel a systematic yaw-induced shift — that
+ * would require known camera pose.
+ */
 export function swayReferenceX(
   landmarks: Landmark[] | null,
   handedness: Handedness,
 ): number | null {
   if (!landmarks) return null;
-  const lead = visiblePoint(landmarks, sideIndices(handedness).leadHip);
-  return lead ? lead.x : null;
+  const side = sideIndices(handedness);
+  const lead = visiblePoint(landmarks, side.leadHip);
+  const trail = visiblePoint(landmarks, side.trailHip);
+  if (!lead || !trail) return null;
+  return midpoint(lead, trail).x;
 }
 
 /**

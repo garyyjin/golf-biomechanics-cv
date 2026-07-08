@@ -145,12 +145,21 @@ button:disabled {
 .video-box {
   position: relative;
   line-height: 0;
+  background: #000;
+  border-radius: 8px;
 }
 
 .video-box video {
   width: 100%;
   height: auto;
   border-radius: 8px;
+}
+
+/* opacity, not display:none — keeps the video's layout box (and therefore
+   its getBoundingClientRect/aspect ratio, which the canvas sizes against and
+   playback still needs) intact while hiding it visually. */
+.video-box.hide-video video {
+  opacity: 0;
 }
 
 .overlay {

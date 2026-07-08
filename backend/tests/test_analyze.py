@@ -1,6 +1,3 @@
-import cv2
-import numpy as np
-import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -8,24 +5,8 @@ from app.main import app
 client = TestClient(app)
 
 
-@pytest.fixture(scope="module")
-def sample_video(tmp_path_factory):
-    """A tiny valid mp4 (no person in it — landmarks may be null)."""
-    path = tmp_path_factory.mktemp("videos") / "sample.mp4"
-    writer = cv2.VideoWriter(
-        str(path), cv2.VideoWriter_fourcc(*"mp4v"), 30.0, (64, 64)
-    )
-    assert writer.isOpened()
-    for i in range(10):
-        frame = np.full((64, 64, 3), i * 20 % 255, dtype=np.uint8)
-        cv2.circle(frame, (32, 32), 10 + i, (0, 255, 0), -1)
-        writer.write(frame)
-    writer.release()
-    return path
-
-
 def post_analyze(video_path, **overrides):
-    fields = {"view": "face_on", "handedness": "right"}
+    fields = {"view": "face_on", "handedness": "right", "quality": "fast"}
     fields.update({k: v for k, v in overrides.items() if v is not None})
     for k in [k for k, v in overrides.items() if v is None]:
         fields.pop(k, None)
@@ -48,6 +29,7 @@ def test_analyze_ok(sample_video):
     assert body["fps"] > 0
     assert body["view"] == "face_on"
     assert body["handedness"] == "right"
+    assert body["quality"] == "fast"
     assert len(body["frames"]) == body["frame_count"]
 
     for i, frame in enumerate(body["frames"]):
@@ -78,6 +60,31 @@ def test_invalid_view_422(sample_video):
 def test_invalid_handedness_422(sample_video):
     response = post_analyze(sample_video, handedness="ambidextrous")
     assert response.status_code == 422
+
+
+def test_missing_quality_422(sample_video):
+    response = post_analyze(sample_video, quality=None)
+    assert response.status_code == 422
+
+
+def test_invalid_quality_422(sample_video):
+    response = post_analyze(sample_video, quality="ultra")
+    assert response.status_code == 422
+
+
+def test_analyze_accurate_quality_ok(sample_video):
+    response = post_analyze(sample_video, quality="accurate")
+    assert response.status_code == 200
+    body = response.json()
+
+    assert body["quality"] == "accurate"
+    assert body["frame_count"] > 0
+    assert body["width"] == 64
+    assert body["height"] == 64
+    assert len(body["frames"]) == body["frame_count"]
+    for frame in body["frames"]:
+        landmarks = frame["landmarks"]
+        assert landmarks is None or len(landmarks) == 33
 
 
 def test_bad_extension_422(tmp_path):

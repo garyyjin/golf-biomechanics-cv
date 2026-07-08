@@ -1,6 +1,12 @@
 import type { Landmark } from "./types";
 
-const ALPHA = 0.4; // weight of the incoming frame
+const ALPHA = 0.4; // weight of the incoming frame at full visibility
+// Landmarks poorly seen (self-occlusion from body turn, edge-of-frame,
+// club/body occlusion) tend to have low MediaPipe visibility; scaling alpha
+// by visibility trusts noisy low-confidence samples less. The 0.1 floor
+// keeps a persistently low-visibility landmark from freezing forever while
+// still strongly damping jitter.
+const MIN_TRUST = 0.1;
 
 /**
  * Exponential smoothing for drawing only — the raw analysis data is never
@@ -30,12 +36,16 @@ export class LandmarkSmoother {
       return this.previous;
     } else {
       const prev = this.previous!;
-      result = landmarks.map((lm, i) => ({
-        x: prev[i].x + ALPHA * (lm.x - prev[i].x),
-        y: prev[i].y + ALPHA * (lm.y - prev[i].y),
-        z: prev[i].z + ALPHA * (lm.z - prev[i].z),
-        visibility: lm.visibility,
-      }));
+      result = landmarks.map((lm, i) => {
+        const trust = Math.max(MIN_TRUST, Math.min(1, lm.visibility));
+        const alpha = ALPHA * trust;
+        return {
+          x: prev[i].x + alpha * (lm.x - prev[i].x),
+          y: prev[i].y + alpha * (lm.y - prev[i].y),
+          z: prev[i].z + alpha * (lm.z - prev[i].z),
+          visibility: lm.visibility,
+        };
+      });
     }
 
     this.previous = result;

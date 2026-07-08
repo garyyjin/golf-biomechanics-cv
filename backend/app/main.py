@@ -25,6 +25,7 @@ def analyze(
     video: UploadFile = File(...),
     view: Literal["face_on", "down_the_line"] = Form(...),
     handedness: Literal["right", "left"] = Form(...),
+    quality: Literal["fast", "accurate"] = Form(...),
 ):
     ext = os.path.splitext(video.filename or "")[1].lower()
     if ext not in ALLOWED_EXTENSIONS:
@@ -37,7 +38,7 @@ def analyze(
         shutil.copyfileobj(video.file, tmp)
         tmp_path = tmp.name
     try:
-        result = analyze_video(tmp_path)
+        result = analyze_video(tmp_path, quality=quality)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     finally:
@@ -50,5 +51,6 @@ def analyze(
         "frame_count": result["frame_count"],
         "view": view,
         "handedness": handedness,
+        "quality": quality,
         "frames": result["frames"],
     }

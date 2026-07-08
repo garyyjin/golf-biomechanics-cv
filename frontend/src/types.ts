@@ -1,5 +1,6 @@
 export type View = "face_on" | "down_the_line";
 export type Handedness = "right" | "left";
+export type Quality = "fast" | "accurate";
 
 export interface Landmark {
   x: number;
@@ -21,5 +22,6 @@ export interface AnalysisResponse {
   frame_count: number;
   view: View;
   handedness: Handedness;
+  quality: Quality;
   frames: PoseFrame[];
 }

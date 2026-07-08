@@ -1,4 +1,4 @@
-import type { AnalysisResponse, Handedness, View } from "./types";
+import type { AnalysisResponse, Handedness, Quality, View } from "./types";
 
 const API_URL = "http://localhost:8000/analyze";
 
@@ -6,11 +6,13 @@ export async function analyzeVideo(
   file: File,
   view: View,
   handedness: Handedness,
+  quality: Quality,
 ): Promise<AnalysisResponse> {
   const form = new FormData();
   form.append("video", file);
   form.append("view", view);
   form.append("handedness", handedness);
+  form.append("quality", quality);
 
   let response: Response;
   try {

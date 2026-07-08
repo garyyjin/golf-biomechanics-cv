@@ -71,7 +71,7 @@ describe("midpoint", () => {
 describe("visiblePoint", () => {
   it("returns the point at the visibility threshold", () => {
     const landmarks = makeLandmarks({ 5: { x: 0.3, y: 0.7, visibility: 0.5 } });
-    expect(visiblePoint(landmarks, 5)).toEqual({ x: 0.3, y: 0.7 });
+    expect(visiblePoint(landmarks, 5)).toEqual({ x: 0.3, y: 0.7, z: 0 });
   });
 
   it("returns null below the visibility threshold", () => {
@@ -154,8 +154,8 @@ describe("spineLine", () => {
   it("runs mid-hip to mid-shoulder with angle 0 for an upright pose", () => {
     const result = spineLine(symmetric, 1);
     expect(result).not.toBeNull();
-    expect(result!.a).toEqual({ x: 0.5, y: 0.7 });
-    expect(result!.b).toEqual({ x: 0.5, y: 0.3 });
+    expect(result!.a).toEqual({ x: 0.5, y: 0.7, z: 0 });
+    expect(result!.b).toEqual({ x: 0.5, y: 0.3, z: 0 });
     expect(result!.angleDeg).toBe(0);
   });
 
@@ -192,8 +192,8 @@ describe("shoulderLine", () => {
 
   it("right-handed: lead shoulder higher gives a positive hand-computed angle", () => {
     const result = shoulderLine(landmarks, "right", 1);
-    expect(result!.a).toEqual({ x: 0.6, y: 0.4 });
-    expect(result!.b).toEqual({ x: 0.4, y: 0.5 });
+    expect(result!.a).toEqual({ x: 0.6, y: 0.4, z: 0 });
+    expect(result!.b).toEqual({ x: 0.4, y: 0.5, z: 0 });
     expect(result!.angleDeg).toBeCloseTo(26.5651, 3); // atan(0.1/0.2)
   });
 
@@ -219,8 +219,8 @@ describe("hipLine", () => {
 
   it("right-handed: lead hip higher gives a positive hand-computed angle", () => {
     const result = hipLine(landmarks, "right", 1);
-    expect(result!.a).toEqual({ x: 0.55, y: 0.62 });
-    expect(result!.b).toEqual({ x: 0.45, y: 0.66 });
+    expect(result!.a).toEqual({ x: 0.55, y: 0.62, z: 0 });
+    expect(result!.b).toEqual({ x: 0.45, y: 0.66, z: 0 });
     expect(result!.angleDeg).toBeCloseTo(21.8014, 3); // atan(0.04/0.1)
   });
 
@@ -244,12 +244,12 @@ describe("swayReferenceX", () => {
     [RIGHT_HIP]: { x: 0.45, y: 0.66 },
   });
 
-  it("right-handed: uses the MediaPipe left hip", () => {
-    expect(swayReferenceX(landmarks, "right")).toBe(0.55);
+  it("right-handed: uses the hip midpoint", () => {
+    expect(swayReferenceX(landmarks, "right")).toBe(0.5);
   });
 
-  it("left-handed: uses the MediaPipe right hip", () => {
-    expect(swayReferenceX(landmarks, "left")).toBe(0.45);
+  it("left-handed: uses the hip midpoint", () => {
+    expect(swayReferenceX(landmarks, "left")).toBe(0.5);
   });
 
   it("returns null for null landmarks or a hidden lead hip", () => {
@@ -257,6 +257,14 @@ describe("swayReferenceX", () => {
     const hidden = makeLandmarks({
       [LEFT_HIP]: { x: 0.55, y: 0.62, visibility: 0.3 },
       [RIGHT_HIP]: { x: 0.45, y: 0.66 },
+    });
+    expect(swayReferenceX(hidden, "right")).toBeNull();
+  });
+
+  it("returns null for a hidden trail hip", () => {
+    const hidden = makeLandmarks({
+      [LEFT_HIP]: { x: 0.55, y: 0.62 },
+      [RIGHT_HIP]: { x: 0.45, y: 0.66, visibility: 0.3 },
     });
     expect(swayReferenceX(hidden, "right")).toBeNull();
   });
@@ -272,13 +280,13 @@ describe("swingPlaneLine", () => {
 
   it("runs wrist midpoint to trail shoulder with a hand-computed inclination", () => {
     const result = swingPlaneLine(landmarks, "right", 1);
-    expect(result!.a).toEqual({ x: 0.52, y: 0.9 });
-    expect(result!.b).toEqual({ x: 0.6, y: 0.5 });
+    expect(result!.a).toEqual({ x: 0.52, y: 0.9, z: 0 });
+    expect(result!.b).toEqual({ x: 0.6, y: 0.5, z: 0 });
     expect(result!.angleDeg).toBeCloseTo(78.6901, 3); // atan(0.4/0.08)
   });
 
   it("left-handed: uses the MediaPipe left shoulder as trail", () => {
-    expect(swingPlaneLine(landmarks, "left", 1)!.b).toEqual({ x: 0.44, y: 0.5 });
+    expect(swingPlaneLine(landmarks, "left", 1)!.b).toEqual({ x: 0.44, y: 0.5, z: 0 });
   });
 
   it("returns null for null landmarks or a hidden wrist", () => {
@@ -331,9 +339,9 @@ describe("computeAddressRefs", () => {
       },
     ];
     const refs = computeAddressRefs(frames, "right", 1);
-    expect(refs.swayX).toBe(0.55);
-    expect(refs.plane!.a).toEqual({ x: 0.52, y: 0.9 });
-    expect(refs.plane!.b).toEqual({ x: 0.6, y: 0.5 });
+    expect(refs.swayX).toBe(0.5);
+    expect(refs.plane!.a).toEqual({ x: 0.52, y: 0.9, z: 0 });
+    expect(refs.plane!.b).toEqual({ x: 0.6, y: 0.5, z: 0 });
   });
 
   it("returns all-null refs when no pose was ever detected", () => {

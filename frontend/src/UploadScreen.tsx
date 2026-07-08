@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { analyzeVideo } from "./api";
-import type { AnalysisResponse, Handedness, View } from "./types";
+import type { AnalysisResponse, Handedness, Quality, View } from "./types";
 
 interface Props {
   onAnalyzed: (file: File, analysis: AnalysisResponse) => void;
@@ -16,21 +16,28 @@ const HANDEDNESS_OPTIONS: { value: Handedness; label: string }[] = [
   { value: "left", label: "Left" },
 ];
 
+const QUALITY_OPTIONS: { value: Quality; label: string }[] = [
+  { value: "fast", label: "Fast" },
+  { value: "accurate", label: "Accurate" },
+];
+
 export function UploadScreen({ onAnalyzed }: Props) {
   const [file, setFile] = useState<File | null>(null);
   const [view, setView] = useState<View | null>(null);
   const [handedness, setHandedness] = useState<Handedness | null>(null);
+  const [quality, setQuality] = useState<Quality | null>(null);
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const ready = file !== null && view !== null && handedness !== null && !processing;
+  const ready =
+    file !== null && view !== null && handedness !== null && quality !== null && !processing;
 
   async function submit() {
-    if (!file || !view || !handedness) return;
+    if (!file || !view || !handedness || !quality) return;
     setProcessing(true);
     setError(null);
     try {
-      const analysis = await analyzeVideo(file, view, handedness);
+      const analysis = await analyzeVideo(file, view, handedness, quality);
       onAnalyzed(file, analysis);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Analysis failed");
@@ -81,6 +88,24 @@ export function UploadScreen({ onAnalyzed }: Props) {
               aria-pressed={handedness === opt.value}
               disabled={processing}
               onClick={() => setHandedness(opt.value)}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="field">
+        <span>Analysis quality</span>
+        <div className="toggle-group" role="radiogroup" aria-label="Analysis quality">
+          {QUALITY_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              className={quality === opt.value ? "toggle selected" : "toggle"}
+              aria-pressed={quality === opt.value}
+              disabled={processing}
+              onClick={() => setQuality(opt.value)}
             >
               {opt.label}
             </button>
