@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { drawSkeleton } from "./draw";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { LINE_COLORS, drawOverlayLines, drawSkeleton } from "./draw";
+import { computeAddressRefs, computeOverlayLines } from "./geometry";
+import type { OverlayLine } from "./geometry";
 import { LandmarkSmoother } from "./smoothing";
 import type { AnalysisResponse } from "./types";
 
@@ -13,11 +15,20 @@ export function PlayerScreen({ videoUrl, analysis, onReset }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const smootherRef = useRef(new LandmarkSmoother());
-  const { fps, frame_count, frames } = analysis;
+  const { fps, frame_count, frames, view, handedness, width, height } = analysis;
+  const aspect = width / height;
 
   const [playing, setPlaying] = useState(false);
   const [duration, setDuration] = useState(0);
   const [time, setTime] = useState(0);
+  const [lines, setLines] = useState<OverlayLine[]>([]);
+
+  // Fixed address-frame references (sway line, swing plane) computed once
+  // from the raw landmarks.
+  const addressRefs = useMemo(
+    () => computeAddressRefs(frames, handedness, aspect),
+    [frames, handedness, aspect],
+  );
 
   const frameIndexAt = useCallback(
     (mediaTime: number) =>
@@ -34,9 +45,12 @@ export function PlayerScreen({ videoUrl, analysis, onReset }: Props) {
       const cssHeight = canvas.clientHeight;
       const index = frameIndexAt(mediaTime);
       const smoothed = smootherRef.current.apply(frames[index].landmarks, index);
+      const overlay = computeOverlayLines(view, smoothed, handedness, aspect, addressRefs);
       drawSkeleton(ctx, smoothed, cssWidth, cssHeight);
+      drawOverlayLines(ctx, overlay, cssWidth, cssHeight);
+      setLines(overlay);
     },
-    [frames, frameIndexAt],
+    [frames, frameIndexAt, view, handedness, aspect, addressRefs],
   );
 
   // requestVideoFrameCallback loop: draws whenever the video presents a frame
@@ -132,23 +146,41 @@ export function PlayerScreen({ videoUrl, analysis, onReset }: Props) {
 
   return (
     <div className="player">
-      <div className="video-box">
-        <video
-          ref={videoRef}
-          src={videoUrl}
-          playsInline
-          onPlay={() => setPlaying(true)}
-          onPause={() => setPlaying(false)}
-          onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
-          onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}
-          onSeeked={(e) => {
-            // Covers paused scrubs in browsers that don't fire a video frame
-            // callback for them.
-            drawAt(e.currentTarget.currentTime);
-            setTime(e.currentTarget.currentTime);
-          }}
-        />
-        <canvas ref={canvasRef} className="overlay" />
+      <div className="player-main">
+        <div className="video-box">
+          <video
+            ref={videoRef}
+            src={videoUrl}
+            playsInline
+            onPlay={() => setPlaying(true)}
+            onPause={() => setPlaying(false)}
+            onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
+            onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}
+            onSeeked={(e) => {
+              // Covers paused scrubs in browsers that don't fire a video frame
+              // callback for them.
+              drawAt(e.currentTarget.currentTime);
+              setTime(e.currentTarget.currentTime);
+            }}
+          />
+          <canvas ref={canvasRef} className="overlay" />
+        </div>
+
+        <aside className="readout-panel">
+          <h2>{view === "face_on" ? "Face-on" : "Down-the-line"}</h2>
+          {lines.map((line) => (
+            <div key={line.id} className="readout-row">
+              <span className="swatch" style={{ background: LINE_COLORS[line.id] }} />
+              <span>{line.label}</span>
+              <span className="value">
+                {line.angleDeg !== null ? `${line.angleDeg.toFixed(1)}°` : "—"}
+              </span>
+            </div>
+          ))}
+          {view === "down_the_line" && (
+            <p className="readout-note">Plane is a body-only approximation</p>
+          )}
+        </aside>
       </div>
 
       <div className="controls">
