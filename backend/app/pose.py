@@ -14,11 +14,16 @@ def analyze_video(path: str) -> dict:
     if not capture.isOpened():
         raise ValueError("could not decode video")
 
+    # Honor rotation metadata (phone-recorded portrait video is typically
+    # stored landscape + a rotation tag). Browsers always render the rotated
+    # orientation, so landmarks must be computed in that same orientation.
+    capture.set(cv2.CAP_PROP_ORIENTATION_AUTO, 1)
+
     fps = capture.get(cv2.CAP_PROP_FPS)
     if not fps or fps <= 0:
         fps = 30.0
-    width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    width = 0
+    height = 0
 
     frames = []
     # smooth_landmarks=False: the API smooths by default, but downstream
@@ -33,6 +38,10 @@ def analyze_video(path: str) -> dict:
             ok, frame = capture.read()
             if not ok:
                 break
+            if index == 0:
+                # Dimensions from the decoded frame, not container props —
+                # props can disagree with the delivered orientation.
+                height, width = frame.shape[:2]
             result = pose.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
             landmarks = None
             if result.pose_landmarks is not None:
