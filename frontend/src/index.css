@@ -87,6 +87,61 @@ button:disabled {
   gap: 0.75rem;
 }
 
+.player-main {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+}
+
+.player-main .video-box {
+  flex: 1;
+  min-width: 0;
+}
+
+.readout-panel {
+  width: 180px;
+  flex: none;
+  background: #1b1f23;
+  border: 1px solid #3c4348;
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+  font-size: 0.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.readout-panel h2 {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #9aa0a6;
+  margin: 0 0 0.15rem;
+}
+
+.readout-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.readout-row .value {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex: none;
+}
+
+.readout-note {
+  color: #9aa0a6;
+  font-size: 0.7rem;
+  margin: 0.2rem 0 0;
+}
+
 .video-box {
   position: relative;
   line-height: 0;
