@@ -252,6 +252,56 @@ function drawClubSegment(
   ctx.fill();
 }
 
+interface Bounds {
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+}
+
+/**
+ * Bounding box (in comparison-space units) over every point actually being
+ * drawn — skeleton joints and club segments alike. The club can extend well
+ * past the body silhouette in any direction depending on swing phase (e.g.
+ * pointing up past the head at the top of the backswing), so a fixed
+ * "assume the head/feet are the extremes" framing (the previous approach)
+ * clips it; fitting to the real content each frame doesn't.
+ */
+function computeBounds(
+  pointSets: (NormalizedPoint[] | null)[],
+  segments: (ClubSegment | null)[],
+): Bounds | null {
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  let found = false;
+
+  const include = (p: { x: number; y: number }) => {
+    minX = Math.min(minX, p.x);
+    maxX = Math.max(maxX, p.x);
+    minY = Math.min(minY, p.y);
+    maxY = Math.max(maxY, p.y);
+    found = true;
+  };
+
+  for (const points of pointSets) {
+    if (!points) continue;
+    for (const p of points) {
+      if (p.visible) include(p);
+    }
+  }
+  for (const segment of segments) {
+    if (!segment) continue;
+    include(segment.hands);
+    include(segment.tip);
+  }
+
+  return found ? { minX, maxX, minY, maxY } : null;
+}
+
+const COMPARISON_PADDING = 0.18;
+
 export function drawComparisonSkeletons(
   ctx: CanvasRenderingContext2D,
   cssWidth: number,
@@ -262,12 +312,21 @@ export function drawComparisonSkeletons(
   referenceClub?: ClubSegment | null,
 ): void {
   ctx.clearRect(0, 0, cssWidth, cssHeight);
-  const cx = cssWidth / 2;
-  // Head can sit up to ~1.6 torso-lengths above the hip and feet ~2.4
-  // below, depending on posture — cy and the scale are chosen with margin
-  // on both ends so the full body fits without clipping the head or feet.
-  const cy = cssHeight * 0.42;
-  const unitScale = Math.min(cssWidth, cssHeight) * 0.22;
+
+  const bounds = computeBounds([user, reference], [userClub ?? null, referenceClub ?? null]);
+  let cx = cssWidth / 2;
+  let cy = cssHeight / 2;
+  let unitScale = Math.min(cssWidth, cssHeight) * 0.22;
+
+  if (bounds) {
+    const contentWidth = Math.max(bounds.maxX - bounds.minX, 1e-6) * (1 + COMPARISON_PADDING * 2);
+    const contentHeight = Math.max(bounds.maxY - bounds.minY, 1e-6) * (1 + COMPARISON_PADDING * 2);
+    unitScale = Math.min(cssWidth / contentWidth, cssHeight / contentHeight);
+    const contentCenterX = (bounds.minX + bounds.maxX) / 2;
+    const contentCenterY = (bounds.minY + bounds.maxY) / 2;
+    cx = cssWidth / 2 - contentCenterX * unitScale;
+    cy = cssHeight / 2 - contentCenterY * unitScale;
+  }
 
   drawNormalizedSkeleton(
     ctx,

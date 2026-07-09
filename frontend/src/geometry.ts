@@ -29,6 +29,8 @@ export const LEFT_HIP = 23;
 export const RIGHT_HIP = 24;
 export const LEFT_ANKLE = 27;
 export const RIGHT_ANKLE = 28;
+export const LEFT_INDEX = 19;
+export const RIGHT_INDEX = 20;
 
 export interface Point {
   x: number;
@@ -61,6 +63,8 @@ export interface SideIndices {
   trailHip: number;
   leadWrist: number;
   trailWrist: number;
+  leadIndex: number;
+  trailIndex: number;
 }
 
 export interface AddressRefs {
@@ -80,6 +84,8 @@ export function sideIndices(handedness: Handedness): SideIndices {
         trailHip: RIGHT_HIP,
         leadWrist: LEFT_WRIST,
         trailWrist: RIGHT_WRIST,
+        leadIndex: LEFT_INDEX,
+        trailIndex: RIGHT_INDEX,
       }
     : {
         leadShoulder: RIGHT_SHOULDER,
@@ -88,6 +94,8 @@ export function sideIndices(handedness: Handedness): SideIndices {
         trailHip: LEFT_HIP,
         leadWrist: RIGHT_WRIST,
         trailWrist: LEFT_WRIST,
+        leadIndex: RIGHT_INDEX,
+        trailIndex: LEFT_INDEX,
       };
 }
 
@@ -263,32 +271,52 @@ export function normalizeLandmarksForComparison(
 
 /**
  * MediaPipe has no club/shaft detection, so the club head position is
- * approximated: extend the line from the trail shoulder through the
- * hand-midpoint (the same axis swingPlaneLine already uses) past the hands
- * by a multiple of that shoulder-to-hands distance. This is a rough stand-in
- * for shaft length, not a measurement — treat it the same way the existing
- * "Plane (approx)" line is treated, as an approximation for visualizing
- * roughly where the club is, not a precise reading.
+ * approximated from hand orientation rather than arm position: the vector
+ * from the wrists toward the index-finger knuckles tracks how the grip (and
+ * therefore the shaft) is angled through wrist hinge/release, which a
+ * shoulder-to-hands line can't capture — that line only resembles the club
+ * at address and drifts badly once the wrists cock going back (this is what
+ * made the tracer point the wrong way at the top of the backswing). Length
+ * is scaled off torso length (a stable body proportion, roughly constant
+ * through the swing) rather than off the tiny, noisy wrist-to-knuckle
+ * distance itself.
  *
  * No aspect correction needed here (unlike the angle functions above): this
- * extends an existing segment by a scalar multiple, which is the same
- * operation whether done in normalized or aspect-corrected coordinates —
- * aspect only matters when measuring an angle between two axes.
+ * extends a point by a scaled direction vector for *drawing*, and drawing
+ * already renders x/y independently (x * cssWidth, y * cssHeight) — aspect
+ * correction only matters when *measuring* an angle between axes.
  */
-const CLUB_LENGTH_MULTIPLIER = 1.8;
+const CLUB_LENGTH_TORSO_RATIO = 1.6;
 
 export function clubTipEstimate(landmarks: Landmark[] | null, handedness: Handedness): Point | null {
   if (!landmarks) return null;
   const side = sideIndices(handedness);
   const lw = visiblePoint(landmarks, side.leadWrist);
   const tw = visiblePoint(landmarks, side.trailWrist);
-  const shoulder = visiblePoint(landmarks, side.trailShoulder);
-  if (!lw || !tw || !shoulder) return null;
+  const li = visiblePoint(landmarks, side.leadIndex);
+  const ti = visiblePoint(landmarks, side.trailIndex);
+  const ls = visiblePoint(landmarks, LEFT_SHOULDER);
+  const rs = visiblePoint(landmarks, RIGHT_SHOULDER);
+  const lh = visiblePoint(landmarks, LEFT_HIP);
+  const rh = visiblePoint(landmarks, RIGHT_HIP);
+  if (!lw || !tw || !li || !ti || !ls || !rs || !lh || !rh) return null;
 
   const handsMid = midpoint(lw, tw);
+  const knuckleMid = midpoint(li, ti);
+  const dx = knuckleMid.x - handsMid.x;
+  const dy = knuckleMid.y - handsMid.y;
+  const dirLength = Math.hypot(dx, dy);
+  if (dirLength < 1e-6) return null;
+
+  const shoulderMid = midpoint(ls, rs);
+  const hipMid = midpoint(lh, rh);
+  const torsoLength = Math.hypot(shoulderMid.x - hipMid.x, shoulderMid.y - hipMid.y);
+  if (torsoLength < 1e-6) return null;
+
+  const shaftLength = torsoLength * CLUB_LENGTH_TORSO_RATIO;
   return {
-    x: handsMid.x + (handsMid.x - shoulder.x) * CLUB_LENGTH_MULTIPLIER,
-    y: handsMid.y + (handsMid.y - shoulder.y) * CLUB_LENGTH_MULTIPLIER,
+    x: handsMid.x + (dx / dirLength) * shaftLength,
+    y: handsMid.y + (dy / dirLength) * shaftLength,
   };
 }
 
