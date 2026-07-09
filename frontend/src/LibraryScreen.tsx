@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { computeSwingSamples } from "./calibration";
+import { FileField } from "./FileField";
 import {
   deleteReferenceSwing,
   listReferenceSwings,
@@ -94,15 +95,13 @@ export function LibraryScreen({ onBenchmarksChanged }: Props) {
       </p>
 
       <div className="library-upload">
-        <label className="field">
-          <span>Reference swing video (mp4, mov or webm)</span>
-          <input
-            type="file"
-            accept=".mp4,.mov,.webm,video/mp4,video/quicktime,video/webm"
-            disabled={uploading}
-            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-          />
-        </label>
+        <FileField
+          label="Reference swing video (mp4, mov or webm)"
+          file={file}
+          accept=".mp4,.mov,.webm,video/mp4,video/quicktime,video/webm"
+          disabled={uploading}
+          onChange={setFile}
+        />
 
         <div className="field">
           <span>Camera view</span>

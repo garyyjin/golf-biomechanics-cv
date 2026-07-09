@@ -189,26 +189,68 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
   return (
     <div className="player">
       <div className="player-main">
-        <div
-          className={hideVideo ? "video-box hide-video" : "video-box"}
-          style={{ aspectRatio: aspect }}
-        >
-          <video
-            ref={videoRef}
-            src={videoUrl}
-            playsInline
-            onPlay={() => setPlaying(true)}
-            onPause={() => setPlaying(false)}
-            onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
-            onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}
-            onSeeked={(e) => {
-              // Covers paused scrubs in browsers that don't fire a video frame
-              // callback for them.
-              drawAt(e.currentTarget.currentTime);
-              setTime(e.currentTarget.currentTime);
-            }}
-          />
-          <canvas ref={canvasRef} className="overlay" />
+        <div className="video-column">
+          <div
+            className={hideVideo ? "video-box hide-video" : "video-box"}
+            style={{ aspectRatio: aspect }}
+          >
+            <video
+              ref={videoRef}
+              src={videoUrl}
+              playsInline
+              onPlay={() => setPlaying(true)}
+              onPause={() => setPlaying(false)}
+              onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
+              onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}
+              onSeeked={(e) => {
+                // Covers paused scrubs in browsers that don't fire a video frame
+                // callback for them.
+                drawAt(e.currentTarget.currentTime);
+                setTime(e.currentTarget.currentTime);
+              }}
+            />
+            <canvas ref={canvasRef} className="overlay" />
+          </div>
+
+          <div className="controls">
+            <button type="button" onClick={togglePlay}>
+              {playing ? "Pause" : "Play"}
+            </button>
+            <input
+              type="range"
+              className="scrub"
+              min={0}
+              max={duration || 0}
+              step={1 / fps}
+              value={Math.min(time, duration || time)}
+              onChange={(e) => seekTo(Number(e.target.value))}
+              aria-label="Scrub"
+            />
+            <span className="frame-label">
+              frame {currentIndex + 1}/{frame_count}
+            </span>
+            <div className="speed-group" role="radiogroup" aria-label="Playback speed">
+              {SPEED_OPTIONS.map((rate) => (
+                <button
+                  key={rate}
+                  type="button"
+                  className={playbackRate === rate ? "toggle speed-btn selected" : "toggle speed-btn"}
+                  aria-pressed={playbackRate === rate}
+                  onClick={() => setPlaybackRate(rate)}
+                >
+                  {rate}x
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              className={hideVideo ? "toggle selected" : "toggle"}
+              aria-pressed={hideVideo}
+              onClick={() => setHideVideo((v) => !v)}
+            >
+              Skeleton only
+            </button>
+          </div>
         </div>
 
         <div className="side-panel">
@@ -240,46 +282,6 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
             onSeekToFrame={(frameIndex) => seekTo(frames[frameIndex].t)}
           />
         </div>
-      </div>
-
-      <div className="controls">
-        <button type="button" onClick={togglePlay}>
-          {playing ? "Pause" : "Play"}
-        </button>
-        <input
-          type="range"
-          className="scrub"
-          min={0}
-          max={duration || 0}
-          step={1 / fps}
-          value={Math.min(time, duration || time)}
-          onChange={(e) => seekTo(Number(e.target.value))}
-          aria-label="Scrub"
-        />
-        <span className="frame-label">
-          frame {currentIndex + 1}/{frame_count}
-        </span>
-        <div className="speed-group" role="radiogroup" aria-label="Playback speed">
-          {SPEED_OPTIONS.map((rate) => (
-            <button
-              key={rate}
-              type="button"
-              className={playbackRate === rate ? "toggle speed-btn selected" : "toggle speed-btn"}
-              aria-pressed={playbackRate === rate}
-              onClick={() => setPlaybackRate(rate)}
-            >
-              {rate}x
-            </button>
-          ))}
-        </div>
-        <button
-          type="button"
-          className={hideVideo ? "toggle selected" : "toggle"}
-          aria-pressed={hideVideo}
-          onClick={() => setHideVideo((v) => !v)}
-        >
-          Skeleton only
-        </button>
       </div>
 
       <p className="hint">Space: play/pause · ← →: step one frame</p>
