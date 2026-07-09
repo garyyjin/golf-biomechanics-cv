@@ -1,9 +1,10 @@
-import type { LineId, NormalizedPoint, OverlayLine } from "./geometry";
+import type { ClubSegment, LineId, NormalizedPoint, OverlayLine, Point } from "./geometry";
 import { POSE_CONNECTIONS, VISIBILITY_THRESHOLD } from "./pose";
 import type { Landmark } from "./types";
 
 const BONE_COLOR = "rgba(80, 220, 130, 0.9)";
 const JOINT_COLOR = "rgba(255, 255, 255, 0.95)";
+const CLUB_TRACER_COLOR = [255, 199, 44] as const;
 
 export const LINE_COLORS: Record<LineId, string> = {
   spine: "#ff9f43",
@@ -125,6 +126,44 @@ export function drawOverlayLines(
   ctx.setLineDash([]);
 }
 
+/**
+ * Draws a fading trail through recent estimated club-head positions (see
+ * geometry.ts's clubTipEstimate — MediaPipe has no club detection, so this
+ * is an approximation anchored to hand position, not a real measurement).
+ * `trail` is oldest-first; opacity ramps up toward the newest point so the
+ * tracer reads as motion rather than a static streak.
+ */
+export function drawClubTracer(
+  ctx: CanvasRenderingContext2D,
+  trail: Point[],
+  cssWidth: number,
+  cssHeight: number,
+): void {
+  if (trail.length === 0) return;
+  const [r, g, b] = CLUB_TRACER_COLOR;
+  const scale = Math.max(cssWidth, cssHeight);
+  const lineWidth = Math.max(1.5, scale * 0.006);
+
+  if (trail.length > 1) {
+    ctx.lineCap = "round";
+    ctx.lineWidth = lineWidth;
+    for (let i = 1; i < trail.length; i++) {
+      const t = i / (trail.length - 1);
+      ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${(0.15 + 0.75 * t).toFixed(3)})`;
+      ctx.beginPath();
+      ctx.moveTo(trail[i - 1].x * cssWidth, trail[i - 1].y * cssHeight);
+      ctx.lineTo(trail[i].x * cssWidth, trail[i].y * cssHeight);
+      ctx.stroke();
+    }
+  }
+
+  const tip = trail[trail.length - 1];
+  ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.95)`;
+  ctx.beginPath();
+  ctx.arc(tip.x * cssWidth, tip.y * cssHeight, Math.max(2.5, scale * 0.007), 0, Math.PI * 2);
+  ctx.fill();
+}
+
 // Tuned for the comparison canvas's light card background (unlike the video
 // overlay's colors above, which assume a dark video underneath).
 const COMPARISON_USER_BONE = "rgba(22, 163, 74, 0.95)";
@@ -183,20 +222,52 @@ function drawNormalizedSkeleton(
  * distort the comparison. Either skeleton may be null (drawn as absent, not
  * an error) so a phase that's missing on one side still shows the other.
  */
+function drawClubSegment(
+  ctx: CanvasRenderingContext2D,
+  segment: ClubSegment | null,
+  cx: number,
+  cy: number,
+  unitScale: number,
+  dashed: boolean,
+): void {
+  if (!segment) return;
+  const [r, g, b] = CLUB_TRACER_COLOR;
+  const px = (p: NormalizedPoint) => ({ x: cx + p.x * unitScale, y: cy + p.y * unitScale });
+  const hands = px(segment.hands);
+  const tip = px(segment.tip);
+
+  ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${dashed ? 0.55 : 0.9})`;
+  ctx.lineWidth = Math.max(1.5, unitScale * 0.025);
+  ctx.lineCap = "round";
+  ctx.setLineDash(dashed ? [5, 4] : []);
+  ctx.beginPath();
+  ctx.moveTo(hands.x, hands.y);
+  ctx.lineTo(tip.x, tip.y);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${dashed ? 0.6 : 0.95})`;
+  ctx.beginPath();
+  ctx.arc(tip.x, tip.y, Math.max(1.5, unitScale * 0.03), 0, Math.PI * 2);
+  ctx.fill();
+}
+
 export function drawComparisonSkeletons(
   ctx: CanvasRenderingContext2D,
   cssWidth: number,
   cssHeight: number,
   user: NormalizedPoint[] | null,
   reference: NormalizedPoint[] | null,
+  userClub?: ClubSegment | null,
+  referenceClub?: ClubSegment | null,
 ): void {
   ctx.clearRect(0, 0, cssWidth, cssHeight);
   const cx = cssWidth / 2;
-  // Head sits ~1.3 torso-lengths above the hip, feet ~2.3 below — cy is
-  // biased toward the top and the scale kept conservative so a portrait
-  // (taller-than-wide) canvas fits the full body without clipping feet.
-  const cy = cssHeight * 0.4;
-  const unitScale = Math.min(cssWidth, cssHeight) * 0.27;
+  // Head can sit up to ~1.6 torso-lengths above the hip and feet ~2.4
+  // below, depending on posture — cy and the scale are chosen with margin
+  // on both ends so the full body fits without clipping the head or feet.
+  const cy = cssHeight * 0.42;
+  const unitScale = Math.min(cssWidth, cssHeight) * 0.22;
 
   drawNormalizedSkeleton(
     ctx,
@@ -209,6 +280,8 @@ export function drawComparisonSkeletons(
     true,
   );
   drawNormalizedSkeleton(ctx, user, cx, cy, unitScale, COMPARISON_USER_BONE, COMPARISON_USER_JOINT, false);
+  drawClubSegment(ctx, referenceClub ?? null, cx, cy, unitScale, true);
+  drawClubSegment(ctx, userClub ?? null, cx, cy, unitScale, false);
 }
 
 function drawLabelChip(

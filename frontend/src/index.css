@@ -319,6 +319,10 @@ button:disabled {
   margin: 0.2rem 0 0;
 }
 
+.readout-warning {
+  color: var(--color-ember);
+}
+
 .video-box {
   position: relative;
   line-height: 0;
@@ -501,8 +505,13 @@ button:disabled {
   border: 1px solid var(--color-hairline);
 }
 
+.comparison-toggle {
+  font-size: 12px;
+  padding: 6px 14px;
+}
+
 .comparison {
-  margin: 0.25rem 0 1rem;
+  margin: 0.5rem 0 1rem;
 }
 
 .comparison-canvas {
@@ -542,6 +551,10 @@ button:disabled {
 .comparison-swatch-reference {
   background: transparent;
   border: 1.5px dashed rgba(17, 24, 39, 0.5);
+}
+
+.comparison-swatch-club {
+  background: rgb(255, 199, 44);
 }
 
 .comparison-caption {
@@ -627,4 +640,83 @@ button:disabled {
 .library-entry-meta span:first-child {
   color: var(--color-ink);
   font-weight: 500;
+}
+
+.library-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 12px;
+}
+
+.library-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  background: var(--color-paper);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-nested);
+  box-shadow: var(--shadow-card);
+  padding: 18px 10px;
+  text-align: center;
+  width: 100%;
+}
+
+.library-tile-icon {
+  width: 40px;
+  height: 40px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--color-surface-alt);
+  color: var(--color-secondary);
+}
+
+.library-tile-name {
+  font-size: 11px;
+  color: var(--color-mid-gray);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  width: 100%;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(17, 24, 39, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  z-index: 300;
+}
+
+.modal {
+  background: var(--color-paper);
+  border-radius: var(--radius-cards);
+  box-shadow: var(--shadow-card);
+  padding: 24px;
+  max-width: 480px;
+  width: 100%;
+  max-height: 85vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.modal video {
+  width: 100%;
+  border-radius: var(--radius-media);
+  background: var(--color-neutral);
+  display: block;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
 }
