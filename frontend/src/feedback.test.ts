@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { BenchmarkTable } from "./benchmarks";
-import { computeFeedback } from "./feedback";
+import { DEFAULT_BENCHMARKS } from "./benchmarks.default";
+import { SCORED_PHASES, computeFeedback } from "./feedback";
 import { LEFT_HIP, LEFT_SHOULDER, LEFT_WRIST, RIGHT_HIP, RIGHT_SHOULDER, RIGHT_WRIST } from "./geometry";
 import { makeLandmarks } from "./testUtils";
 import type { AnalysisResponse, PoseFrame } from "./types";
@@ -100,6 +101,25 @@ describe("computeFeedback", () => {
 
     const hipItem = result.items.find((i) => i.metric === "hipTurn")!;
     expect(hipItem.status).toBe("undetected");
+  });
+
+  it("scores all six phases against the default benchmarks", () => {
+    // Like CLEAN_SWING_Y but with a post-impact rise so follow-through is
+    // detectable too.
+    const fullSwingY = [...hold(0.9, 15), ...ramp(0.9, 0.3, 30), ...hold(0.3, 5), ...ramp(0.3, 0.88, 7), ...ramp(0.88, 0.35, 12)];
+    const analysis = makeAnalysis(makeSwingFrames(fullSwingY, FPS));
+    const result = computeFeedback(analysis, DEFAULT_BENCHMARKS);
+
+    expect(SCORED_PHASES).toEqual(["address", "takeaway", "top", "downswing", "impact", "followThrough"]);
+    for (const phase of SCORED_PHASES) {
+      expect(result.phases[phase], `${phase} frame`).not.toBeNull();
+      const items = result.items.filter((i) => i.phase === phase);
+      expect(items.length, `${phase} items`).toBeGreaterThan(0);
+      for (const item of items) {
+        expect(item.value, `${phase}/${item.metric} value`).not.toBeNull();
+        expect(item.status, `${phase}/${item.metric} status`).not.toBe("undetected");
+      }
+    }
   });
 
   it("produces no items for a phase with no benchmark entries", () => {

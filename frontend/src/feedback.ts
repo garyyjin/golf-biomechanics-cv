@@ -23,7 +23,7 @@ export interface FeedbackResult {
   items: FeedbackItem[];
 }
 
-export const SCORED_PHASES: Phase[] = ["address", "top", "impact"];
+export const SCORED_PHASES: Phase[] = ["address", "takeaway", "top", "downswing", "impact", "followThrough"];
 
 export const PHASE_ORDER: Phase[] = ["address", "takeaway", "top", "downswing", "impact", "followThrough"];
 
