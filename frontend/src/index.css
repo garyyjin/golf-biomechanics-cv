@@ -339,60 +339,59 @@ button:disabled {
 
 .feedback-row {
   display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  row-gap: 4px;
-  gap: 0.5rem;
+  flex-direction: column;
+  gap: 0.3rem;
   width: 100%;
   text-align: left;
   background: var(--color-surface-alt);
   border: 1px solid var(--color-hairline);
   border-radius: var(--radius-nested);
-  padding: 0.5rem 0.7rem;
+  padding: 0.6rem 0.7rem;
   margin-bottom: 0.35rem;
   font-size: 13px;
 }
 
-.feedback-metric {
-  flex: 1 1 100%;
-  font-weight: 500;
+.feedback-row-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
 }
 
-.feedback-value {
-  font-variant-numeric: tabular-nums;
+.feedback-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  margin-top: 5px;
+}
+
+.feedback-dot-within {
+  background: rgb(22, 163, 74);
+}
+
+.feedback-dot-below,
+.feedback-dot-above {
+  background: var(--color-ink);
+}
+
+.feedback-dot-undetected {
+  background: var(--color-surface-alt);
+  border: 1px solid var(--color-mid-gray);
+}
+
+.feedback-tip {
   color: var(--color-ink);
+  line-height: 1.4;
 }
 
-.feedback-status {
+.feedback-row-detail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-left: 16px;
+  color: var(--color-mid-gray);
   font-size: 11px;
-  font-weight: 500;
-  padding: 2px 8px;
-  border-radius: var(--radius-badges);
-  white-space: nowrap;
-}
-
-.feedback-status-within {
-  background: var(--color-ink-soft);
-  color: var(--color-surface-alt);
-}
-
-.feedback-status-below,
-.feedback-status-above {
-  background: var(--color-canvas);
-  color: var(--color-ink);
-  border: 1px solid var(--color-hairline);
-}
-
-.feedback-status-undetected {
-  background: transparent;
-  color: var(--color-mid-gray);
-  border: 1px solid var(--color-hairline);
-}
-
-.feedback-range {
-  color: var(--color-mid-gray);
-  font-size: 12px;
-  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .feedback-source {
