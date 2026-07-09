@@ -27,6 +27,10 @@ export const LEFT_WRIST = 15;
 export const RIGHT_WRIST = 16;
 export const LEFT_HIP = 23;
 export const RIGHT_HIP = 24;
+export const LEFT_ANKLE = 27;
+export const RIGHT_ANKLE = 28;
+export const LEFT_INDEX = 19;
+export const RIGHT_INDEX = 20;
 
 export interface Point {
   x: number;
@@ -59,6 +63,8 @@ export interface SideIndices {
   trailHip: number;
   leadWrist: number;
   trailWrist: number;
+  leadIndex: number;
+  trailIndex: number;
 }
 
 export interface AddressRefs {
@@ -78,6 +84,8 @@ export function sideIndices(handedness: Handedness): SideIndices {
         trailHip: RIGHT_HIP,
         leadWrist: LEFT_WRIST,
         trailWrist: RIGHT_WRIST,
+        leadIndex: LEFT_INDEX,
+        trailIndex: RIGHT_INDEX,
       }
     : {
         leadShoulder: RIGHT_SHOULDER,
@@ -86,6 +94,8 @@ export function sideIndices(handedness: Handedness): SideIndices {
         trailHip: LEFT_HIP,
         leadWrist: RIGHT_WRIST,
         trailWrist: LEFT_WRIST,
+        leadIndex: RIGHT_INDEX,
+        trailIndex: LEFT_INDEX,
       };
 }
 
@@ -207,6 +217,35 @@ export interface NormalizedPoint {
   visible: boolean;
 }
 
+interface ComparisonTransform {
+  hipMid: Point;
+  torsoLength: number;
+}
+
+function computeComparisonTransform(landmarks: Landmark[], aspect: number): ComparisonTransform | null {
+  const lh = visiblePoint(landmarks, LEFT_HIP);
+  const rh = visiblePoint(landmarks, RIGHT_HIP);
+  const ls = visiblePoint(landmarks, LEFT_SHOULDER);
+  const rs = visiblePoint(landmarks, RIGHT_SHOULDER);
+  if (!lh || !rh || !ls || !rs) return null;
+
+  const hipMid = midpoint(lh, rh);
+  const shoulderMid = midpoint(ls, rs);
+  const dx = (shoulderMid.x - hipMid.x) * aspect;
+  const dy = shoulderMid.y - hipMid.y;
+  const torsoLength = Math.hypot(dx, dy);
+  if (torsoLength < 1e-6) return null;
+  return { hipMid, torsoLength };
+}
+
+function applyComparisonTransform(point: Point, transform: ComparisonTransform, aspect: number): NormalizedPoint {
+  return {
+    x: ((point.x - transform.hipMid.x) * aspect) / transform.torsoLength,
+    y: (point.y - transform.hipMid.y) / transform.torsoLength,
+    visible: true,
+  };
+}
+
 /**
  * Re-centers landmarks on the hip midpoint and scales by torso length
  * (hip-mid to shoulder-mid, aspect-corrected), so two swings filmed at
@@ -221,24 +260,130 @@ export function normalizeLandmarksForComparison(
   aspect: number,
 ): NormalizedPoint[] | null {
   if (!landmarks) return null;
-  const lh = visiblePoint(landmarks, LEFT_HIP);
-  const rh = visiblePoint(landmarks, RIGHT_HIP);
-  const ls = visiblePoint(landmarks, LEFT_SHOULDER);
-  const rs = visiblePoint(landmarks, RIGHT_SHOULDER);
-  if (!lh || !rh || !ls || !rs) return null;
-
-  const hipMid = midpoint(lh, rh);
-  const shoulderMid = midpoint(ls, rs);
-  const dx = (shoulderMid.x - hipMid.x) * aspect;
-  const dy = shoulderMid.y - hipMid.y;
-  const torsoLength = Math.hypot(dx, dy);
-  if (torsoLength < 1e-6) return null;
+  const transform = computeComparisonTransform(landmarks, aspect);
+  if (!transform) return null;
 
   return landmarks.map((lm) => ({
-    x: ((lm.x - hipMid.x) * aspect) / torsoLength,
-    y: (lm.y - hipMid.y) / torsoLength,
+    ...applyComparisonTransform({ x: lm.x, y: lm.y }, transform, aspect),
     visible: lm.visibility >= VISIBILITY_THRESHOLD,
   }));
+}
+
+/**
+ * MediaPipe has no club/shaft detection, so the club head position is
+ * approximated from hand orientation rather than arm position: the vector
+ * from the wrists toward the index-finger knuckles tracks how the grip (and
+ * therefore the shaft) is angled through wrist hinge/release, which a
+ * shoulder-to-hands line can't capture — that line only resembles the club
+ * at address and drifts badly once the wrists cock going back (this is what
+ * made the tracer point the wrong way at the top of the backswing). Length
+ * is scaled off torso length (a stable body proportion, roughly constant
+ * through the swing) rather than off the tiny, noisy wrist-to-knuckle
+ * distance itself.
+ *
+ * No aspect correction needed here (unlike the angle functions above): this
+ * extends a point by a scaled direction vector for *drawing*, and drawing
+ * already renders x/y independently (x * cssWidth, y * cssHeight) — aspect
+ * correction only matters when *measuring* an angle between axes.
+ */
+const CLUB_LENGTH_TORSO_RATIO = 1.6;
+
+export function clubTipEstimate(landmarks: Landmark[] | null, handedness: Handedness): Point | null {
+  if (!landmarks) return null;
+  const side = sideIndices(handedness);
+  const lw = visiblePoint(landmarks, side.leadWrist);
+  const tw = visiblePoint(landmarks, side.trailWrist);
+  const li = visiblePoint(landmarks, side.leadIndex);
+  const ti = visiblePoint(landmarks, side.trailIndex);
+  const ls = visiblePoint(landmarks, LEFT_SHOULDER);
+  const rs = visiblePoint(landmarks, RIGHT_SHOULDER);
+  const lh = visiblePoint(landmarks, LEFT_HIP);
+  const rh = visiblePoint(landmarks, RIGHT_HIP);
+  if (!lw || !tw || !li || !ti || !ls || !rs || !lh || !rh) return null;
+
+  const handsMid = midpoint(lw, tw);
+  const knuckleMid = midpoint(li, ti);
+  const dx = knuckleMid.x - handsMid.x;
+  const dy = knuckleMid.y - handsMid.y;
+  const dirLength = Math.hypot(dx, dy);
+  if (dirLength < 1e-6) return null;
+
+  const shoulderMid = midpoint(ls, rs);
+  const hipMid = midpoint(lh, rh);
+  const torsoLength = Math.hypot(shoulderMid.x - hipMid.x, shoulderMid.y - hipMid.y);
+  if (torsoLength < 1e-6) return null;
+
+  const shaftLength = torsoLength * CLUB_LENGTH_TORSO_RATIO;
+  return {
+    x: handsMid.x + (dx / dirLength) * shaftLength,
+    y: handsMid.y + (dy / dirLength) * shaftLength,
+  };
+}
+
+export interface ClubSegment {
+  hands: NormalizedPoint;
+  tip: NormalizedPoint;
+}
+
+/**
+ * Hands-to-club-tip segment in the same normalized comparison space as
+ * normalizeLandmarksForComparison, for drawing alongside a comparison
+ * skeleton. Pass `detectedTip` (the backend's Hough-line detection, when
+ * available) to use it instead of the body-pose estimate — same
+ * detected-first, heuristic-fallback policy as the main video overlay.
+ */
+export function clubSegmentForComparison(
+  landmarks: Landmark[] | null,
+  handedness: Handedness,
+  aspect: number,
+  detectedTip?: Point | null,
+): ClubSegment | null {
+  if (!landmarks) return null;
+  const transform = computeComparisonTransform(landmarks, aspect);
+  if (!transform) return null;
+
+  const side = sideIndices(handedness);
+  const lw = visiblePoint(landmarks, side.leadWrist);
+  const tw = visiblePoint(landmarks, side.trailWrist);
+  const tip = detectedTip ?? clubTipEstimate(landmarks, handedness);
+  if (!lw || !tw || !tip) return null;
+
+  return {
+    hands: applyComparisonTransform(midpoint(lw, tw), transform, aspect),
+    tip: applyComparisonTransform(tip, transform, aspect),
+  };
+}
+
+/**
+ * Heuristic check for whether a down-the-line video was actually filmed
+ * from along the target line. When the camera is aligned, the stance
+ * (feet apart along the target line, i.e. straight toward/away from the
+ * camera) foreshortens almost entirely away, so the ankles land very close
+ * together on screen; a camera off to the side reveals more of the true
+ * stance width as horizontal (x) separation. Torso length (not hip width,
+ * which foreshortens the same way the ankles do) is used as the reference
+ * scale since it stays roughly constant under this kind of yaw.
+ *
+ * This is a rough heuristic tuned by eye, not a calibrated measurement —
+ * it exists to catch clearly-off-axis footage, not to grade alignment
+ * precisely.
+ */
+const DOWN_THE_LINE_MISALIGNMENT_RATIO = 0.35;
+
+export function downTheLineAlignmentRatio(landmarks: Landmark[] | null, aspect: number): number | null {
+  if (!landmarks) return null;
+  const la = visiblePoint(landmarks, LEFT_ANKLE);
+  const ra = visiblePoint(landmarks, RIGHT_ANKLE);
+  const transform = computeComparisonTransform(landmarks, aspect);
+  if (!la || !ra || !transform) return null;
+
+  const ankleSeparation = Math.abs(la.x - ra.x) * aspect;
+  return ankleSeparation / transform.torsoLength;
+}
+
+export function isDownTheLineMisaligned(landmarks: Landmark[] | null, aspect: number): boolean {
+  const ratio = downTheLineAlignmentRatio(landmarks, aspect);
+  return ratio !== null && ratio > DOWN_THE_LINE_MISALIGNMENT_RATIO;
 }
 
 /** The address frame: frame 0, falling back to the first detected pose. */

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { ComparisonDiagram } from "./ComparisonDiagram";
 import { mapUserFrameToReference } from "./comparison";
 import type { ReferenceSwing } from "./comparison";
@@ -48,16 +49,20 @@ export function FeedbackPanel({
   referenceStatus,
   onSeekToFrame,
 }: FeedbackPanelProps) {
+  const [showComparison, setShowComparison] = useState(false);
   const hasEmpirical = result.items.some((item) => item.source === "empirical");
   const userAspect = analysis.width / analysis.height;
   const referenceAspect = reference ? reference.analysis.width / reference.analysis.height : null;
 
   const userLandmarks = analysis.frames[currentIndex]?.landmarks ?? null;
+  const userDetectedTip = analysis.frames[currentIndex]?.club_tip ?? null;
   const referenceFrameIndex = reference
     ? mapUserFrameToReference(currentIndex, result.phases, reference.phases, reference.analysis.frame_count)
     : null;
-  const referenceLandmarks =
-    reference && referenceFrameIndex !== null ? reference.analysis.frames[referenceFrameIndex].landmarks : null;
+  const referenceFrame =
+    reference && referenceFrameIndex !== null ? reference.analysis.frames[referenceFrameIndex] : null;
+  const referenceLandmarks = referenceFrame?.landmarks ?? null;
+  const referenceDetectedTip = referenceFrame?.club_tip ?? null;
 
   return (
     <details className="feedback-panel" open>
@@ -82,12 +87,27 @@ export function FeedbackPanel({
       </div>
 
       {userLandmarks && (
+        <button
+          type="button"
+          className={showComparison ? "toggle comparison-toggle selected" : "toggle comparison-toggle"}
+          aria-pressed={showComparison}
+          onClick={() => setShowComparison((v) => !v)}
+        >
+          {showComparison ? "Hide skeleton comparison" : "Show skeleton comparison"}
+        </button>
+      )}
+
+      {showComparison && userLandmarks && (
         <div className="comparison">
           <ComparisonDiagram
             userLandmarks={userLandmarks}
             userAspect={userAspect}
+            userHandedness={analysis.handedness}
+            userDetectedTip={userDetectedTip}
             referenceLandmarks={referenceLandmarks}
             referenceAspect={referenceAspect}
+            referenceHandedness={reference?.analysis.handedness ?? null}
+            referenceDetectedTip={referenceDetectedTip}
           />
           <div className="comparison-legend">
             <span className="comparison-legend-item">
@@ -98,6 +118,9 @@ export function FeedbackPanel({
                 <span className="comparison-swatch comparison-swatch-reference" /> Reference
               </span>
             )}
+            <span className="comparison-legend-item">
+              <span className="comparison-swatch comparison-swatch-club" /> Club
+            </span>
           </div>
           <p className="comparison-caption">
             {referenceStatus === "loading" && "Loading a reference swing to compare against…"}

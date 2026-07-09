@@ -1,17 +1,25 @@
 import { describe, expect, it } from "vitest";
 import {
+  LEFT_ANKLE,
   LEFT_HIP,
+  LEFT_INDEX,
   LEFT_SHOULDER,
   LEFT_WRIST,
+  RIGHT_ANKLE,
   RIGHT_HIP,
+  RIGHT_INDEX,
   RIGHT_SHOULDER,
   RIGHT_WRIST,
   angleFromHorizontalDeg,
   angleFromVerticalDeg,
+  clubSegmentForComparison,
+  clubTipEstimate,
   computeAddressRefs,
   computeOverlayLines,
+  downTheLineAlignmentRatio,
   findAddressFrame,
   hipLine,
+  isDownTheLineMisaligned,
   midpoint,
   normalizeLandmarksForComparison,
   shoulderLine,
@@ -36,6 +44,8 @@ describe("sideIndices", () => {
       trailHip: RIGHT_HIP,
       leadWrist: LEFT_WRIST,
       trailWrist: RIGHT_WRIST,
+      leadIndex: LEFT_INDEX,
+      trailIndex: RIGHT_INDEX,
     });
   });
 
@@ -47,6 +57,8 @@ describe("sideIndices", () => {
       trailHip: LEFT_HIP,
       leadWrist: RIGHT_WRIST,
       trailWrist: LEFT_WRIST,
+      leadIndex: RIGHT_INDEX,
+      trailIndex: LEFT_INDEX,
     });
   });
 });
@@ -338,6 +350,164 @@ describe("normalizeLandmarksForComparison", () => {
       [RIGHT_HIP]: { x: 0.6, y: 0.7 },
     });
     expect(normalizeLandmarksForComparison(hidden, 1)).toBeNull();
+  });
+});
+
+describe("clubTipEstimate", () => {
+  // shoulder-mid (0.5,0.3) to hip-mid (0.5,0.7): torso length 0.4, shaft
+  // length 0.4 * 1.6 = 0.64
+  const torso = {
+    [LEFT_SHOULDER]: { x: 0.4, y: 0.3 },
+    [RIGHT_SHOULDER]: { x: 0.6, y: 0.3 },
+    [LEFT_HIP]: { x: 0.4, y: 0.7 },
+    [RIGHT_HIP]: { x: 0.6, y: 0.7 },
+  };
+
+  it("extends from the hands in the wrist-to-knuckle direction", () => {
+    const landmarks = makeLandmarks({
+      ...torso,
+      [LEFT_WRIST]: { x: 0.5, y: 0.6 },
+      [RIGHT_WRIST]: { x: 0.5, y: 0.6 },
+      [LEFT_INDEX]: { x: 0.5, y: 0.5 },
+      [RIGHT_INDEX]: { x: 0.5, y: 0.5 },
+    });
+    // knuckles sit straight above the wrists -> tip extends straight up
+    const tip = clubTipEstimate(landmarks, "right");
+    expect(tip!.x).toBeCloseTo(0.5, 6);
+    expect(tip!.y).toBeCloseTo(-0.04, 6); // 0.6 - 0.64
+  });
+
+  it("follows hand orientation, not arm position (tracks wrist hinge)", () => {
+    const landmarks = makeLandmarks({
+      ...torso,
+      [LEFT_WRIST]: { x: 0.5, y: 0.6 },
+      [RIGHT_WRIST]: { x: 0.5, y: 0.6 },
+      [LEFT_INDEX]: { x: 0.6, y: 0.6 },
+      [RIGHT_INDEX]: { x: 0.6, y: 0.6 },
+    });
+    // knuckles point sideways from the wrists -> tip extends sideways,
+    // regardless of where the shoulder is
+    const tip = clubTipEstimate(landmarks, "right");
+    expect(tip!.x).toBeCloseTo(1.14, 6); // 0.5 + 0.64
+    expect(tip!.y).toBeCloseTo(0.6, 6);
+  });
+
+  it("left-handed: uses the left-side wrist/index landmarks", () => {
+    const landmarks = makeLandmarks({
+      ...torso,
+      [LEFT_WRIST]: { x: 0.5, y: 0.6 },
+      [RIGHT_WRIST]: { x: 0.5, y: 0.6 },
+      [LEFT_INDEX]: { x: 0.5, y: 0.5 },
+      [RIGHT_INDEX]: { x: 0.5, y: 0.5 },
+    });
+    const tip = clubTipEstimate(landmarks, "left");
+    expect(tip!.y).toBeCloseTo(-0.04, 6);
+  });
+
+  it("returns null for null landmarks or a hidden knuckle", () => {
+    expect(clubTipEstimate(null, "right")).toBeNull();
+    const hidden = makeLandmarks({
+      ...torso,
+      [LEFT_WRIST]: { x: 0.5, y: 0.6 },
+      [RIGHT_WRIST]: { x: 0.5, y: 0.6 },
+      [LEFT_INDEX]: { x: 0.5, y: 0.5, visibility: 0.1 },
+      [RIGHT_INDEX]: { x: 0.5, y: 0.5 },
+    });
+    expect(clubTipEstimate(hidden, "right")).toBeNull();
+  });
+});
+
+describe("clubSegmentForComparison", () => {
+  const landmarks = makeLandmarks({
+    [LEFT_SHOULDER]: { x: 0.4, y: 0.3 },
+    [RIGHT_SHOULDER]: { x: 0.6, y: 0.3 },
+    [LEFT_HIP]: { x: 0.4, y: 0.7 },
+    [RIGHT_HIP]: { x: 0.6, y: 0.7 },
+    [LEFT_WRIST]: { x: 0.5, y: 0.6 },
+    [RIGHT_WRIST]: { x: 0.5, y: 0.6 },
+    [LEFT_INDEX]: { x: 0.5, y: 0.5 },
+    [RIGHT_INDEX]: { x: 0.5, y: 0.5 },
+  });
+
+  it("returns hands/tip in the same normalized-comparison space as the skeleton", () => {
+    const segment = clubSegmentForComparison(landmarks, "right", 1);
+    expect(segment).not.toBeNull();
+    // hip-mid (0.5,0.7), torso length 0.4: hands (0.5,0.6) -> (0, -0.25)
+    expect(segment!.hands.x).toBeCloseTo(0, 6);
+    expect(segment!.hands.y).toBeCloseTo(-0.25, 6);
+    // tip (0.5, -0.04) -> ((0.5-0.5)/0.4, (-0.04-0.7)/0.4)
+    expect(segment!.tip.x).toBeCloseTo(0, 6);
+    expect(segment!.tip.y).toBeCloseTo(-1.85, 6);
+  });
+
+  it("uses a provided detected tip instead of the body-pose estimate", () => {
+    const segment = clubSegmentForComparison(landmarks, "right", 1, { x: 0.9, y: 0.9 });
+    expect(segment).not.toBeNull();
+    // detected tip (0.9,0.9) -> ((0.9-0.5)/0.4, (0.9-0.7)/0.4)
+    expect(segment!.tip.x).toBeCloseTo(1, 6);
+    expect(segment!.tip.y).toBeCloseTo(0.5, 6);
+  });
+
+  it("falls back to the body-pose estimate when detectedTip is null", () => {
+    const withEstimate = clubSegmentForComparison(landmarks, "right", 1);
+    const withNullDetected = clubSegmentForComparison(landmarks, "right", 1, null);
+    expect(withNullDetected).toEqual(withEstimate);
+  });
+
+  it("returns null for null landmarks", () => {
+    expect(clubSegmentForComparison(null, "right", 1)).toBeNull();
+  });
+
+  it("returns null when the torso can't anchor the transform", () => {
+    const hidden = makeLandmarks({
+      [LEFT_SHOULDER]: { x: 0.4, y: 0.3, visibility: 0.1 },
+      [RIGHT_SHOULDER]: { x: 0.6, y: 0.3 },
+      [LEFT_HIP]: { x: 0.4, y: 0.7 },
+      [RIGHT_HIP]: { x: 0.6, y: 0.7 },
+      [LEFT_WRIST]: { x: 0.5, y: 0.6 },
+      [RIGHT_WRIST]: { x: 0.5, y: 0.6 },
+      [LEFT_INDEX]: { x: 0.5, y: 0.5 },
+      [RIGHT_INDEX]: { x: 0.5, y: 0.5 },
+    });
+    expect(clubSegmentForComparison(hidden, "right", 1)).toBeNull();
+  });
+});
+
+describe("downTheLineAlignmentRatio / isDownTheLineMisaligned", () => {
+  const base = {
+    [LEFT_SHOULDER]: { x: 0.48, y: 0.3 },
+    [RIGHT_SHOULDER]: { x: 0.52, y: 0.3 },
+    [LEFT_HIP]: { x: 0.48, y: 0.6 },
+    [RIGHT_HIP]: { x: 0.52, y: 0.6 },
+  };
+
+  it("is a small ratio for well-aligned footage (ankles nearly stacked)", () => {
+    const landmarks = makeLandmarks({
+      ...base,
+      [LEFT_ANKLE]: { x: 0.5, y: 0.95 },
+      [RIGHT_ANKLE]: { x: 0.51, y: 0.95 },
+    });
+    const ratio = downTheLineAlignmentRatio(landmarks, 1);
+    expect(ratio).not.toBeNull();
+    expect(ratio!).toBeLessThan(0.35);
+    expect(isDownTheLineMisaligned(landmarks, 1)).toBe(false);
+  });
+
+  it("is a large ratio for off-axis footage (ankles spread apart)", () => {
+    const landmarks = makeLandmarks({
+      ...base,
+      [LEFT_ANKLE]: { x: 0.35, y: 0.95 },
+      [RIGHT_ANKLE]: { x: 0.65, y: 0.95 },
+    });
+    const ratio = downTheLineAlignmentRatio(landmarks, 1);
+    expect(ratio).not.toBeNull();
+    expect(ratio!).toBeGreaterThan(0.35);
+    expect(isDownTheLineMisaligned(landmarks, 1)).toBe(true);
+  });
+
+  it("returns null when landmarks are missing", () => {
+    expect(downTheLineAlignmentRatio(null, 1)).toBeNull();
+    expect(isDownTheLineMisaligned(null, 1)).toBe(false);
   });
 });
 

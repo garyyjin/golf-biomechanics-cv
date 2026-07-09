@@ -1,6 +1,7 @@
 """Per-frame pose extraction with MediaPipe Pose (raw landmarks, no smoothing)."""
 
 import logging
+import math
 
 import cv2
 import mediapipe as mp
@@ -16,17 +17,149 @@ _ROTATE_CODES = {
     270: cv2.ROTATE_90_COUNTERCLOCKWISE,
 }
 
+# MediaPipe Pose landmark indices (mirrors geometry.ts's constants).
+_LEFT_SHOULDER, _RIGHT_SHOULDER = 11, 12
+_LEFT_HIP, _RIGHT_HIP = 23, 24
+_LEFT_WRIST, _RIGHT_WRIST = 15, 16
+_LEFT_INDEX, _RIGHT_INDEX = 19, 20
+_VISIBILITY_THRESHOLD = 0.5
+
 
 def _rotation_code(degrees: float) -> int | None:
     """Map a CAP_PROP_ORIENTATION_META angle to a cv2.rotate() code, or None."""
     return _ROTATE_CODES.get(int(round(degrees)) % 360)
 
 
+def _hand_candidate(landmarks: list[dict], wrist_idx: int, index_idx: int) -> tuple[dict, dict, float] | None:
+    """(wrist, index-knuckle, min-visibility) for one hand, or None if either
+    landmark is below the visibility threshold."""
+    wrist = landmarks[wrist_idx]
+    index_lm = landmarks[index_idx]
+    visibility = min(wrist["visibility"], index_lm["visibility"])
+    if visibility < _VISIBILITY_THRESHOLD:
+        return None
+    return (wrist, index_lm, visibility)
+
+
+def _detect_club_tip(frame, landmarks: list[dict], width: int, height: int) -> dict | None:
+    """Approximates the club-head pixel position with a Hough line detection
+    anchored near the hands, rather than inferring it purely from body pose.
+
+    MediaPipe has no club/shaft detection, so this looks for a real straight
+    edge in the pixels: golf shafts are thin, high-contrast lines originating
+    at the hands. A generous ROI around the hands (sized off torso length, a
+    scale reference that stays roughly stable regardless of camera angle —
+    shoulder *width* was tried first but collapses badly in a down-the-line
+    view, where the shoulders are seen almost edge-on) is searched with
+    Canny + probabilistic Hough transform; candidate segments are required
+    to have one endpoint near the hands and to be reasonably aligned with
+    the wrist-to-knuckle direction (the same hand-orientation prior
+    geometry.ts's clubTipEstimate uses) — that alignment check is what
+    rejects sleeve/arm/background edges instead of picking whatever line
+    happens to be nearby.
+
+    Anchors on whichever hand is actually visible rather than requiring
+    both: in anything close to a profile view (down-the-line especially),
+    one hand is very often occluded by the other or by the body, and
+    requiring both left this detecting almost nothing on real down-the-line
+    footage even though the visible hand alone is enough to anchor a search.
+
+    Returns None (the frontend then falls back to the body-pose estimate)
+    when neither hand is visible or no confident line is found — motion
+    blur, low contrast, and an occluded club are all realistic failure modes
+    for a technique built on visible edges rather than a trained detector.
+    """
+    ls, rs = landmarks[_LEFT_SHOULDER], landmarks[_RIGHT_SHOULDER]
+    if min(ls["visibility"], rs["visibility"]) < _VISIBILITY_THRESHOLD:
+        return None
+
+    candidates = [
+        c
+        for c in (
+            _hand_candidate(landmarks, _LEFT_WRIST, _LEFT_INDEX),
+            _hand_candidate(landmarks, _RIGHT_WRIST, _RIGHT_INDEX),
+        )
+        if c is not None
+    ]
+    if not candidates:
+        return None
+    wrist, index_lm, _ = max(candidates, key=lambda c: c[2])
+
+    hands_x, hands_y = wrist["x"] * width, wrist["y"] * height
+    knuckle_x, knuckle_y = index_lm["x"] * width, index_lm["y"] * height
+    prior_len = math.hypot(knuckle_x - hands_x, knuckle_y - hands_y)
+    if prior_len < 1e-6:
+        return None
+    prior_dx, prior_dy = (knuckle_x - hands_x) / prior_len, (knuckle_y - hands_y) / prior_len
+
+    lh, rh = landmarks[_LEFT_HIP], landmarks[_RIGHT_HIP]
+    shoulder_mid = ((ls["x"] + rs["x"]) / 2 * width, (ls["y"] + rs["y"]) / 2 * height)
+    hip_mid = ((lh["x"] + rh["x"]) / 2 * width, (lh["y"] + rh["y"]) / 2 * height)
+    torso_length = math.hypot(shoulder_mid[0] - hip_mid[0], shoulder_mid[1] - hip_mid[1])
+    if torso_length < 1:
+        return None
+    radius = torso_length * 2.0
+
+    x0, y0 = max(0, int(hands_x - radius)), max(0, int(hands_y - radius))
+    x1, y1 = min(width, int(hands_x + radius)), min(height, int(hands_y + radius))
+    if x1 - x0 < 10 or y1 - y0 < 10:
+        return None
+
+    roi = frame[y0:y1, x0:x1]
+    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+    edges = cv2.Canny(gray, 50, 150)
+    lines = cv2.HoughLinesP(
+        edges,
+        rho=1,
+        theta=math.pi / 180,
+        threshold=25,
+        minLineLength=max(10, int(radius * 0.18)),
+        maxLineGap=max(4, int(radius * 0.04)),
+    )
+    if lines is None:
+        return None
+
+    near_radius = radius * 0.4
+    best_point = None
+    best_score = -math.inf
+    for line in lines:
+        lx1, ly1, lx2, ly2 = line[0]
+        p1 = (lx1 + x0, ly1 + y0)
+        p2 = (lx2 + x0, ly2 + y0)
+        d1 = math.hypot(p1[0] - hands_x, p1[1] - hands_y)
+        d2 = math.hypot(p2[0] - hands_x, p2[1] - hands_y)
+        near, far = (p1, p2) if d1 <= d2 else (p2, p1)
+        if min(d1, d2) > near_radius:
+            continue
+
+        seg_len = math.hypot(far[0] - near[0], far[1] - near[1])
+        if seg_len < 1e-6:
+            continue
+        seg_dx, seg_dy = (far[0] - near[0]) / seg_len, (far[1] - near[1]) / seg_len
+        alignment = seg_dx * prior_dx + seg_dy * prior_dy
+        if alignment < 0.3:  # reject lines pointing away from the hand-orientation prior
+            continue
+
+        score = seg_len * alignment
+        if score > best_score:
+            best_score = score
+            best_point = far
+
+    if best_point is None:
+        return None
+    return {"x": best_point[0] / width, "y": best_point[1] / height}
+
+
 def analyze_video(path: str, quality: str = "fast") -> dict:
     """Decode a video frame-by-frame and extract 33 pose landmarks per frame.
 
     Returns {fps, width, height, frame_count, frames}; frames with no detected
-    pose get landmarks=None. Raises ValueError if the file cannot be decoded.
+    pose get landmarks=None. Each frame also carries club_tip — a
+    {x, y} normalized point from Hough-line detection anchored on the hands
+    (see _detect_club_tip), or None when no confident line was found (a
+    frame with no landmarks always has club_tip=None too, since detection
+    needs the hand landmarks to anchor its search). Raises ValueError if the
+    file cannot be decoded.
     """
     # Backend pinned explicitly: auto-selection (FFmpeg vs Media Foundation vs
     # DirectShow on Windows) is inconsistent about honoring rotation metadata,
@@ -80,6 +213,7 @@ def analyze_video(path: str, quality: str = "fast") -> dict:
                 height, width = frame.shape[:2]
             result = pose.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
             landmarks = None
+            club_tip = None
             if result.pose_landmarks is not None:
                 landmarks = [
                     {
@@ -90,7 +224,8 @@ def analyze_video(path: str, quality: str = "fast") -> dict:
                     }
                     for lm in result.pose_landmarks.landmark
                 ]
-            frames.append({"index": index, "t": index / fps, "landmarks": landmarks})
+                club_tip = _detect_club_tip(frame, landmarks, width, height)
+            frames.append({"index": index, "t": index / fps, "landmarks": landmarks, "club_tip": club_tip})
             index += 1
 
     capture.release()

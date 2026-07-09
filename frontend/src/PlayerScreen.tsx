@@ -2,13 +2,19 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BenchmarkTable } from "./benchmarks";
 import { findLatestReferenceSwing } from "./comparison";
 import type { ReferenceSwing } from "./comparison";
-import { LINE_COLORS, drawOverlayLines, drawSkeleton } from "./draw";
+import { LINE_COLORS, drawClubTracer, drawOverlayLines, drawSkeleton } from "./draw";
 import { FeedbackPanel } from "./FeedbackPanel";
 import type { ReferenceStatus } from "./FeedbackPanel";
 import { computeFeedback } from "./feedback";
-import { computeAddressRefs, computeOverlayLines } from "./geometry";
-import type { OverlayLine } from "./geometry";
-import { LandmarkSmoother } from "./smoothing";
+import {
+  clubTipEstimate,
+  computeAddressRefs,
+  computeOverlayLines,
+  findAddressFrame,
+  isDownTheLineMisaligned,
+} from "./geometry";
+import type { OverlayLine, Point } from "./geometry";
+import { LandmarkSmoother, PointSmoother } from "./smoothing";
 import type { AnalysisResponse } from "./types";
 
 interface Props {
@@ -19,11 +25,16 @@ interface Props {
 }
 
 const SPEED_OPTIONS = [0.25, 0.5, 1] as const;
+const CLUB_TRAIL_MAX_LENGTH = 18;
+const CLUB_TRAIL_JUMP_THRESHOLD = 2;
 
 export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const smootherRef = useRef(new LandmarkSmoother());
+  const clubPointSmootherRef = useRef(new PointSmoother());
+  const clubTrailRef = useRef<Point[]>([]);
+  const prevIndexRef = useRef<number | null>(null);
   const { fps, frame_count, frames, view, handedness, width, height } = analysis;
   const aspect = width / height;
 
@@ -72,6 +83,15 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
 
   const feedback = useMemo(() => computeFeedback(analysis, benchmarks), [analysis, benchmarks]);
 
+  // Down-the-line footage is most accurate when the camera sits directly on
+  // the target line; a camera off to the side reveals stance width on
+  // screen that a well-aligned shot wouldn't show.
+  const alignmentWarning = useMemo(() => {
+    if (view !== "down_the_line") return false;
+    const address = findAddressFrame(frames);
+    return address ? isDownTheLineMisaligned(address.landmarks, aspect) : false;
+  }, [view, frames, aspect]);
+
   const frameIndexAt = useCallback(
     (mediaTime: number) =>
       Math.min(frame_count - 1, Math.max(0, Math.round(mediaTime * fps))),
@@ -91,6 +111,24 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
       drawSkeleton(ctx, smoothed, cssWidth, cssHeight);
       drawOverlayLines(ctx, overlay, cssWidth, cssHeight);
       setLines(overlay);
+
+      // A big jump (scrub/seek) starts a fresh tracer instead of drawing a
+      // straight streak across the skipped frames.
+      const prevIndex = prevIndexRef.current;
+      if (prevIndex === null || Math.abs(index - prevIndex) > CLUB_TRAIL_JUMP_THRESHOLD) {
+        clubTrailRef.current = [];
+      }
+      prevIndexRef.current = index;
+
+      // Prefer the backend's Hough-line detection; fall back to the
+      // body-pose estimate when no confident line was found for this frame.
+      const detectedTip = frames[index].club_tip ?? null;
+      const rawTip = detectedTip ?? clubTipEstimate(smoothed, handedness);
+      const tip = clubPointSmootherRef.current.apply(rawTip, index);
+      if (tip) {
+        clubTrailRef.current = [...clubTrailRef.current, tip].slice(-CLUB_TRAIL_MAX_LENGTH);
+      }
+      drawClubTracer(ctx, clubTrailRef.current, cssWidth, cssHeight);
     },
     [frames, frameIndexAt, view, handedness, aspect, addressRefs],
   );
@@ -265,10 +303,21 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
                 </span>
               </div>
             ))}
+            <div className="readout-row">
+              <span className="swatch" style={{ background: "rgb(255, 199, 44)" }} />
+              <span>Club (detected, or approx. when unclear)</span>
+            </div>
             {view === "down_the_line" && (
               <p className="readout-note">
                 Plane is a body-only approximation — most accurate with the camera aligned to
                 the target line
+              </p>
+            )}
+            {view === "down_the_line" && alignmentWarning && (
+              <p className="readout-note readout-warning">
+                Your feet look spread apart on screen for a down-the-line shot — the camera may
+                not be lined up with the target line, which can skew these readings. Try
+                positioning the camera directly behind the ball, in line with the target.
               </p>
             )}
           </aside>
