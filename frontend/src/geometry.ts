@@ -1,5 +1,5 @@
-import { VISIBILITY_THRESHOLD } from "./pose";
-import type { Handedness, Landmark, PoseFrame, View } from "./types";
+import { VISIBILITY_THRESHOLD } from "./pose.ts";
+import type { Handedness, Landmark, PoseFrame, View } from "./types.ts";
 
 /**
  * Pure geometry for the biomechanics overlay. No canvas/DOM here.

@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { BenchmarkTable } from "./benchmarks";
 import { LINE_COLORS, drawOverlayLines, drawSkeleton } from "./draw";
+import { FeedbackPanel } from "./FeedbackPanel";
+import { computeFeedback } from "./feedback";
 import { computeAddressRefs, computeOverlayLines } from "./geometry";
 import type { OverlayLine } from "./geometry";
 import { LandmarkSmoother } from "./smoothing";
@@ -8,10 +11,11 @@ import type { AnalysisResponse } from "./types";
 interface Props {
   videoUrl: string;
   analysis: AnalysisResponse;
+  benchmarks: BenchmarkTable;
   onReset: () => void;
 }
 
-export function PlayerScreen({ videoUrl, analysis, onReset }: Props) {
+export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const smootherRef = useRef(new LandmarkSmoother());
@@ -30,6 +34,8 @@ export function PlayerScreen({ videoUrl, analysis, onReset }: Props) {
     () => computeAddressRefs(frames, handedness, aspect),
     [frames, handedness, aspect],
   );
+
+  const feedback = useMemo(() => computeFeedback(analysis, benchmarks), [analysis, benchmarks]);
 
   const frameIndexAt = useCallback(
     (mediaTime: number) =>
@@ -186,6 +192,8 @@ export function PlayerScreen({ videoUrl, analysis, onReset }: Props) {
           )}
         </aside>
       </div>
+
+      <FeedbackPanel result={feedback} onSeekToFrame={(frameIndex) => seekTo(frames[frameIndex].t)} />
 
       <div className="controls">
         <button type="button" onClick={togglePlay}>
