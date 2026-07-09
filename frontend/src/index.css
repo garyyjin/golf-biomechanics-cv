@@ -302,7 +302,15 @@ button:disabled {
 }
 
 .feedback-group {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
   margin-top: 0.75rem;
+}
+
+.feedback-group-metrics {
+  flex: 1;
+  min-width: 0;
 }
 
 .feedback-group h3 {
@@ -392,22 +400,63 @@ button:disabled {
 }
 
 .comparison {
-  margin-top: 0.4rem;
+  flex: none;
+  width: 200px;
 }
 
 .comparison-canvas {
   width: 100%;
-  height: 160px;
+  height: 240px;
   display: block;
   background: var(--color-surface-alt);
   border: 1px solid var(--color-hairline);
   border-radius: var(--radius-nested);
 }
 
+.comparison-legend {
+  display: flex;
+  gap: 10px;
+  margin-top: 0.4rem;
+  font-size: 11px;
+  color: var(--color-mid-gray);
+}
+
+.comparison-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.comparison-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex: none;
+}
+
+.comparison-swatch-user {
+  background: rgb(22, 163, 74);
+}
+
+.comparison-swatch-reference {
+  background: transparent;
+  border: 1.5px dashed rgba(23, 23, 23, 0.5);
+}
+
 .comparison-caption {
   color: var(--color-mid-gray);
   font-size: 11px;
   margin: 0.3rem 0 0;
+}
+
+@media (max-width: 640px) {
+  .feedback-group {
+    flex-direction: column;
+  }
+
+  .comparison {
+    width: 100%;
+  }
 }
 
 .feedback-caption {

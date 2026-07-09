@@ -125,10 +125,12 @@ export function drawOverlayLines(
   ctx.setLineDash([]);
 }
 
-const COMPARISON_USER_BONE = "rgba(80, 220, 130, 0.95)";
-const COMPARISON_USER_JOINT = "rgba(255, 255, 255, 0.95)";
-const COMPARISON_REFERENCE_BONE = "rgba(160, 160, 160, 0.6)";
-const COMPARISON_REFERENCE_JOINT = "rgba(200, 200, 200, 0.7)";
+// Tuned for the comparison canvas's light card background (unlike the video
+// overlay's colors above, which assume a dark video underneath).
+const COMPARISON_USER_BONE = "rgba(22, 163, 74, 0.95)";
+const COMPARISON_USER_JOINT = "rgba(10, 10, 10, 0.9)";
+const COMPARISON_REFERENCE_BONE = "rgba(23, 23, 23, 0.4)";
+const COMPARISON_REFERENCE_JOINT = "rgba(23, 23, 23, 0.5)";
 
 /**
  * Draws a single normalized skeleton (see geometry.ts's
@@ -190,8 +192,11 @@ export function drawComparisonSkeletons(
 ): void {
   ctx.clearRect(0, 0, cssWidth, cssHeight);
   const cx = cssWidth / 2;
-  const cy = cssHeight * 0.58;
-  const unitScale = Math.min(cssWidth, cssHeight) * 0.34;
+  // Head sits ~1.3 torso-lengths above the hip, feet ~2.3 below — cy is
+  // biased toward the top and the scale kept conservative so a portrait
+  // (taller-than-wide) canvas fits the full body without clipping feet.
+  const cy = cssHeight * 0.4;
+  const unitScale = Math.min(cssWidth, cssHeight) * 0.3;
 
   drawNormalizedSkeleton(
     ctx,

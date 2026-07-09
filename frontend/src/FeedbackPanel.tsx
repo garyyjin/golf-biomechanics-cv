@@ -65,32 +65,34 @@ export function FeedbackPanel({ result, analysis, reference, referenceStatus, on
 
         return (
           <div key={phase} className="feedback-group">
-            <h3>{PHASE_LABELS[phase]}</h3>
-            {items.map((item) => (
-              <button
-                key={item.metric}
-                type="button"
-                className="feedback-row"
-                disabled={item.frameIndex === null}
-                onClick={() => item.frameIndex !== null && onSeekToFrame(item.frameIndex)}
-              >
-                <span className="feedback-metric">{item.metricLabel}</span>
-                <span className="feedback-value">
-                  {item.value !== null ? `${item.value.toFixed(1)}°` : "—"}
-                </span>
-                <span className={`feedback-status feedback-status-${item.status}`}>
-                  {STATUS_LABEL[item.status]}
-                </span>
-                <span className="feedback-range">
-                  {item.range ? `target ${item.range.min.toFixed(0)}–${item.range.max.toFixed(0)}°` : ""}
-                </span>
-                {item.source && (
-                  <span className={`feedback-source feedback-source-${item.source}`}>
-                    {SOURCE_LABEL[item.source]}
+            <div className="feedback-group-metrics">
+              <h3>{PHASE_LABELS[phase]}</h3>
+              {items.map((item) => (
+                <button
+                  key={item.metric}
+                  type="button"
+                  className="feedback-row"
+                  disabled={item.frameIndex === null}
+                  onClick={() => item.frameIndex !== null && onSeekToFrame(item.frameIndex)}
+                >
+                  <span className="feedback-metric">{item.metricLabel}</span>
+                  <span className="feedback-value">
+                    {item.value !== null ? `${item.value.toFixed(1)}°` : "—"}
                   </span>
-                )}
-              </button>
-            ))}
+                  <span className={`feedback-status feedback-status-${item.status}`}>
+                    {STATUS_LABEL[item.status]}
+                  </span>
+                  <span className="feedback-range">
+                    {item.range ? `target ${item.range.min.toFixed(0)}–${item.range.max.toFixed(0)}°` : ""}
+                  </span>
+                  {item.source && (
+                    <span className={`feedback-source feedback-source-${item.source}`}>
+                      {SOURCE_LABEL[item.source]}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
 
             {userLandmarks && (
               <div className="comparison">
@@ -100,13 +102,23 @@ export function FeedbackPanel({ result, analysis, reference, referenceStatus, on
                   referenceLandmarks={referenceLandmarks}
                   referenceAspect={referenceAspect}
                 />
+                <div className="comparison-legend">
+                  <span className="comparison-legend-item">
+                    <span className="comparison-swatch comparison-swatch-user" /> You
+                  </span>
+                  {referenceLandmarks && (
+                    <span className="comparison-legend-item">
+                      <span className="comparison-swatch comparison-swatch-reference" /> Reference
+                    </span>
+                  )}
+                </div>
                 <p className="comparison-caption">
                   {referenceStatus === "loading" &&
                     "Loading a reference swing to compare against…"}
                   {referenceStatus === "unavailable" &&
                     "Add a matching-view reference swing to your library to see how this phase should look."}
                   {referenceStatus === "loaded" && reference && referenceLandmarks &&
-                    `Ghost: your ${reference.entry.filename} reference at the same phase.`}
+                    `Compared against your ${reference.entry.filename} reference.`}
                   {referenceStatus === "loaded" && reference && !referenceLandmarks &&
                     "Your reference swing doesn't have this phase detected."}
                 </p>
