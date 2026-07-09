@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BenchmarkTable } from "./benchmarks";
+import { findLatestReferenceSwing } from "./comparison";
+import type { ReferenceSwing } from "./comparison";
 import { LINE_COLORS, drawOverlayLines, drawSkeleton } from "./draw";
 import { FeedbackPanel } from "./FeedbackPanel";
+import type { ReferenceStatus } from "./FeedbackPanel";
 import { computeFeedback } from "./feedback";
 import { computeAddressRefs, computeOverlayLines } from "./geometry";
 import type { OverlayLine } from "./geometry";
@@ -27,6 +30,30 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
   const [time, setTime] = useState(0);
   const [lines, setLines] = useState<OverlayLine[]>([]);
   const [hideVideo, setHideVideo] = useState(false);
+  const [reference, setReference] = useState<ReferenceSwing | null>(null);
+  const [referenceStatus, setReferenceStatus] = useState<ReferenceStatus>("loading");
+
+  // Auto-picks the most recent matching-view/handedness reference swing from
+  // the library (no manual picker) so the feedback panel can show a
+  // normalized skeleton comparison alongside each scored phase.
+  useEffect(() => {
+    let cancelled = false;
+    setReferenceStatus("loading");
+    findLatestReferenceSwing(view, handedness)
+      .then((result) => {
+        if (cancelled) return;
+        setReference(result);
+        setReferenceStatus(result ? "loaded" : "unavailable");
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setReference(null);
+        setReferenceStatus("unavailable");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [view, handedness]);
 
   // Fixed address-frame references (sway line, swing plane) computed once
   // from the raw landmarks.
@@ -193,7 +220,13 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
         </aside>
       </div>
 
-      <FeedbackPanel result={feedback} onSeekToFrame={(frameIndex) => seekTo(frames[frameIndex].t)} />
+      <FeedbackPanel
+        result={feedback}
+        analysis={analysis}
+        reference={reference}
+        referenceStatus={referenceStatus}
+        onSeekToFrame={(frameIndex) => seekTo(frames[frameIndex].t)}
+      />
 
       <div className="controls">
         <button type="button" onClick={togglePlay}>

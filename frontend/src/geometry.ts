@@ -201,6 +201,46 @@ export function swingPlaneLine(
   return { a, b: shoulder, angleDeg: angleFromHorizontalDeg(shoulder, a, aspect) };
 }
 
+export interface NormalizedPoint {
+  x: number;
+  y: number;
+  visible: boolean;
+}
+
+/**
+ * Re-centers landmarks on the hip midpoint and scales by torso length
+ * (hip-mid to shoulder-mid, aspect-corrected), so two swings filmed at
+ * different distances/framing produce comparably-sized skeletons. Output is
+ * a unitless space (torso length = 1) with y still growing downward, meant
+ * for side-by-side diagrams rather than drawing over the source video.
+ * Returns null when the torso landmarks aren't visible enough to anchor the
+ * normalization.
+ */
+export function normalizeLandmarksForComparison(
+  landmarks: Landmark[] | null,
+  aspect: number,
+): NormalizedPoint[] | null {
+  if (!landmarks) return null;
+  const lh = visiblePoint(landmarks, LEFT_HIP);
+  const rh = visiblePoint(landmarks, RIGHT_HIP);
+  const ls = visiblePoint(landmarks, LEFT_SHOULDER);
+  const rs = visiblePoint(landmarks, RIGHT_SHOULDER);
+  if (!lh || !rh || !ls || !rs) return null;
+
+  const hipMid = midpoint(lh, rh);
+  const shoulderMid = midpoint(ls, rs);
+  const dx = (shoulderMid.x - hipMid.x) * aspect;
+  const dy = shoulderMid.y - hipMid.y;
+  const torsoLength = Math.hypot(dx, dy);
+  if (torsoLength < 1e-6) return null;
+
+  return landmarks.map((lm) => ({
+    x: ((lm.x - hipMid.x) * aspect) / torsoLength,
+    y: (lm.y - hipMid.y) / torsoLength,
+    visible: lm.visibility >= VISIBILITY_THRESHOLD,
+  }));
+}
+
 /** The address frame: frame 0, falling back to the first detected pose. */
 export function findAddressFrame(frames: PoseFrame[]): PoseFrame | null {
   for (const frame of frames) {

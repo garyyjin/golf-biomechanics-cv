@@ -132,6 +132,17 @@ def get_entry_video_path(entry_id: str) -> Path | None:
     return _entry_dir(entry_id) / f"video{ext}"
 
 
+def get_entry_analysis(entry_id: str) -> dict | None:
+    entry = _find_entry(entry_id)
+    if entry is None:
+        return None
+    analysis_path = _entry_dir(entry_id) / "analysis.json"
+    if not analysis_path.exists():
+        return None
+    with open(analysis_path, encoding="utf-8") as f:
+        return json.load(f)
+
+
 def delete_entry(entry_id: str) -> dict | None:
     entry = _find_entry(entry_id)
     if entry is None:

@@ -57,6 +57,22 @@ def test_video_endpoint_unknown_404():
     assert response.status_code == 404
 
 
+def test_analysis_endpoint_returns_full_analysis(sample_video):
+    entry = upload(sample_video).json()
+    response = client.get(f"/reference-swings/{entry['id']}/analysis")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["view"] == "face_on"
+    assert body["handedness"] == "right"
+    assert body["quality"] == "accurate"
+    assert "frames" in body
+
+
+def test_analysis_endpoint_unknown_404():
+    response = client.get("/reference-swings/does-not-exist/analysis")
+    assert response.status_code == 404
+
+
 def test_delete_removes_entry(sample_video):
     entry = upload(sample_video).json()
     response = client.delete(f"/reference-swings/{entry['id']}")

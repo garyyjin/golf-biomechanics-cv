@@ -1,4 +1,4 @@
-import type { LineId, OverlayLine } from "./geometry";
+import type { LineId, NormalizedPoint, OverlayLine } from "./geometry";
 import { POSE_CONNECTIONS, VISIBILITY_THRESHOLD } from "./pose";
 import type { Landmark } from "./types";
 
@@ -123,6 +123,87 @@ export function drawOverlayLines(
     drawLabelChip(ctx, text, lx, ly, color, cssWidth, cssHeight);
   }
   ctx.setLineDash([]);
+}
+
+const COMPARISON_USER_BONE = "rgba(80, 220, 130, 0.95)";
+const COMPARISON_USER_JOINT = "rgba(255, 255, 255, 0.95)";
+const COMPARISON_REFERENCE_BONE = "rgba(160, 160, 160, 0.6)";
+const COMPARISON_REFERENCE_JOINT = "rgba(200, 200, 200, 0.7)";
+
+/**
+ * Draws a single normalized skeleton (see geometry.ts's
+ * normalizeLandmarksForComparison — torso length = 1 unit, hip-centered)
+ * scaled by `unitScale` pixels-per-unit around (cx, cy).
+ */
+function drawNormalizedSkeleton(
+  ctx: CanvasRenderingContext2D,
+  points: NormalizedPoint[] | null,
+  cx: number,
+  cy: number,
+  unitScale: number,
+  boneColor: string,
+  jointColor: string,
+  dashed: boolean,
+): void {
+  if (!points) return;
+  const px = (p: NormalizedPoint) => ({ x: cx + p.x * unitScale, y: cy + p.y * unitScale });
+
+  ctx.strokeStyle = boneColor;
+  ctx.lineWidth = Math.max(1.5, unitScale * 0.03);
+  ctx.lineCap = "round";
+  ctx.setLineDash(dashed ? [6, 5] : []);
+  ctx.beginPath();
+  for (const [a, b] of POSE_CONNECTIONS) {
+    if (!points[a].visible || !points[b].visible) continue;
+    const pa = px(points[a]);
+    const pb = px(points[b]);
+    ctx.moveTo(pa.x, pa.y);
+    ctx.lineTo(pb.x, pb.y);
+  }
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.fillStyle = jointColor;
+  const radius = Math.max(1.5, unitScale * 0.035);
+  for (const point of points) {
+    if (!point.visible) continue;
+    const p = px(point);
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+/**
+ * Draws a user skeleton (solid, green) over a reference skeleton (dashed,
+ * gray "ghost"), both already hip-centered/torso-scaled by
+ * normalizeLandmarksForComparison so differing camera framing doesn't
+ * distort the comparison. Either skeleton may be null (drawn as absent, not
+ * an error) so a phase that's missing on one side still shows the other.
+ */
+export function drawComparisonSkeletons(
+  ctx: CanvasRenderingContext2D,
+  cssWidth: number,
+  cssHeight: number,
+  user: NormalizedPoint[] | null,
+  reference: NormalizedPoint[] | null,
+): void {
+  ctx.clearRect(0, 0, cssWidth, cssHeight);
+  const cx = cssWidth / 2;
+  const cy = cssHeight * 0.58;
+  const unitScale = Math.min(cssWidth, cssHeight) * 0.34;
+
+  drawNormalizedSkeleton(
+    ctx,
+    reference,
+    cx,
+    cy,
+    unitScale,
+    COMPARISON_REFERENCE_BONE,
+    COMPARISON_REFERENCE_JOINT,
+    true,
+  );
+  drawNormalizedSkeleton(ctx, user, cx, cy, unitScale, COMPARISON_USER_BONE, COMPARISON_USER_JOINT, false);
 }
 
 function drawLabelChip(

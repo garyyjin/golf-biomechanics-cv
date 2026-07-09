@@ -1,8 +1,16 @@
+import { ComparisonDiagram } from "./ComparisonDiagram";
+import type { ReferenceSwing } from "./comparison";
 import { PHASE_LABELS, PHASE_ORDER, SCORED_PHASES } from "./feedback";
 import type { FeedbackItem, FeedbackResult } from "./feedback";
+import type { AnalysisResponse } from "./types";
+
+export type ReferenceStatus = "loading" | "loaded" | "unavailable";
 
 interface FeedbackPanelProps {
   result: FeedbackResult;
+  analysis: AnalysisResponse;
+  reference: ReferenceSwing | null;
+  referenceStatus: ReferenceStatus;
   onSeekToFrame: (frameIndex: number) => void;
 }
 
@@ -18,8 +26,10 @@ const SOURCE_LABEL: Record<NonNullable<FeedbackItem["source"]>, string> = {
   published: "Default",
 };
 
-export function FeedbackPanel({ result, onSeekToFrame }: FeedbackPanelProps) {
+export function FeedbackPanel({ result, analysis, reference, referenceStatus, onSeekToFrame }: FeedbackPanelProps) {
   const hasEmpirical = result.items.some((item) => item.source === "empirical");
+  const userAspect = analysis.width / analysis.height;
+  const referenceAspect = reference ? reference.analysis.width / reference.analysis.height : null;
 
   return (
     <details className="feedback-panel" open>
@@ -46,6 +56,13 @@ export function FeedbackPanel({ result, onSeekToFrame }: FeedbackPanelProps) {
       {SCORED_PHASES.map((phase) => {
         const items = result.items.filter((item) => item.phase === phase);
         if (items.length === 0) return null;
+
+        const userFrameIndex = result.phases[phase];
+        const userLandmarks = userFrameIndex !== null ? analysis.frames[userFrameIndex].landmarks : null;
+        const referenceFrameIndex = reference ? reference.phases[phase] : null;
+        const referenceLandmarks =
+          reference && referenceFrameIndex !== null ? reference.analysis.frames[referenceFrameIndex].landmarks : null;
+
         return (
           <div key={phase} className="feedback-group">
             <h3>{PHASE_LABELS[phase]}</h3>
@@ -74,6 +91,27 @@ export function FeedbackPanel({ result, onSeekToFrame }: FeedbackPanelProps) {
                 )}
               </button>
             ))}
+
+            {userLandmarks && (
+              <div className="comparison">
+                <ComparisonDiagram
+                  userLandmarks={userLandmarks}
+                  userAspect={userAspect}
+                  referenceLandmarks={referenceLandmarks}
+                  referenceAspect={referenceAspect}
+                />
+                <p className="comparison-caption">
+                  {referenceStatus === "loading" &&
+                    "Loading a reference swing to compare against…"}
+                  {referenceStatus === "unavailable" &&
+                    "Add a matching-view reference swing to your library to see how this phase should look."}
+                  {referenceStatus === "loaded" && reference && referenceLandmarks &&
+                    `Ghost: your ${reference.entry.filename} reference at the same phase.`}
+                  {referenceStatus === "loaded" && reference && !referenceLandmarks &&
+                    "Your reference swing doesn't have this phase detected."}
+                </p>
+              </div>
+            )}
           </div>
         );
       })}
