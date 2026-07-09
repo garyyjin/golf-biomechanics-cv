@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { findLatestReferenceSwing } from "./comparison";
+import { findLatestReferenceSwing, mapUserFrameToReference } from "./comparison";
 import { LEFT_WRIST, RIGHT_WRIST } from "./geometry";
+import type { SwingPhases } from "./phases";
 import { makeLandmarks } from "./testUtils";
 import type { PoseFrame } from "./types";
 
@@ -67,5 +68,60 @@ describe("findLatestReferenceSwing", () => {
     stubFetch();
     const result = await findLatestReferenceSwing("down_the_line", "left");
     expect(result).toBeNull();
+  });
+});
+
+describe("mapUserFrameToReference", () => {
+  const userPhases: SwingPhases = {
+    address: 0,
+    takeaway: null,
+    top: 40,
+    downswing: null,
+    impact: 60,
+    followThrough: null,
+  };
+  const referencePhases: SwingPhases = {
+    address: 10,
+    takeaway: null,
+    top: 30,
+    downswing: null,
+    impact: 40,
+    followThrough: null,
+  };
+
+  it("interpolates linearly between two shared phase anchors", () => {
+    // Halfway between address (user 0 -> ref 10) and top (user 40 -> ref 30).
+    expect(mapUserFrameToReference(20, userPhases, referencePhases, 100)).toBe(20);
+  });
+
+  it("lands exactly on an anchor's reference frame", () => {
+    expect(mapUserFrameToReference(40, userPhases, referencePhases, 100)).toBe(30);
+    expect(mapUserFrameToReference(60, userPhases, referencePhases, 100)).toBe(40);
+  });
+
+  it("clamps to the first anchor's reference frame before it", () => {
+    expect(mapUserFrameToReference(-5, userPhases, referencePhases, 100)).toBe(10);
+  });
+
+  it("clamps to the last anchor's reference frame after it", () => {
+    expect(mapUserFrameToReference(200, userPhases, referencePhases, 100)).toBe(40);
+  });
+
+  it("returns null when no phase is detected on both sides", () => {
+    const noOverlap: SwingPhases = {
+      address: null,
+      takeaway: null,
+      top: null,
+      downswing: null,
+      impact: null,
+      followThrough: null,
+    };
+    expect(mapUserFrameToReference(20, noOverlap, referencePhases, 100)).toBeNull();
+  });
+
+  it("clamps the interpolated result within the reference frame count", () => {
+    const wide: SwingPhases = { ...userPhases, top: 40 };
+    const farReference: SwingPhases = { ...referencePhases, top: 500 };
+    expect(mapUserFrameToReference(40, wide, farReference, 100)).toBe(99);
   });
 });

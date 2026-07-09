@@ -223,6 +223,7 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
           <FeedbackPanel
             result={feedback}
             analysis={analysis}
+            currentIndex={currentIndex}
             reference={reference}
             referenceStatus={referenceStatus}
             onSeekToFrame={(frameIndex) => seekTo(frames[frameIndex].t)}

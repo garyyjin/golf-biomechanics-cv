@@ -403,12 +403,12 @@ button:disabled {
 }
 
 .comparison {
-  margin-top: 0.4rem;
+  margin: 0.25rem 0 1rem;
 }
 
 .comparison-canvas {
   width: 100%;
-  height: 220px;
+  height: 280px;
   display: block;
   background: var(--color-surface-alt);
   border: 1px solid var(--color-hairline);

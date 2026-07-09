@@ -1,4 +1,5 @@
 import { ComparisonDiagram } from "./ComparisonDiagram";
+import { mapUserFrameToReference } from "./comparison";
 import type { ReferenceSwing } from "./comparison";
 import { PHASE_LABELS, PHASE_ORDER, SCORED_PHASES } from "./feedback";
 import type { FeedbackItem, FeedbackResult } from "./feedback";
@@ -9,6 +10,7 @@ export type ReferenceStatus = "loading" | "loaded" | "unavailable";
 interface FeedbackPanelProps {
   result: FeedbackResult;
   analysis: AnalysisResponse;
+  currentIndex: number;
   reference: ReferenceSwing | null;
   referenceStatus: ReferenceStatus;
   onSeekToFrame: (frameIndex: number) => void;
@@ -26,10 +28,24 @@ const SOURCE_LABEL: Record<NonNullable<FeedbackItem["source"]>, string> = {
   published: "Default",
 };
 
-export function FeedbackPanel({ result, analysis, reference, referenceStatus, onSeekToFrame }: FeedbackPanelProps) {
+export function FeedbackPanel({
+  result,
+  analysis,
+  currentIndex,
+  reference,
+  referenceStatus,
+  onSeekToFrame,
+}: FeedbackPanelProps) {
   const hasEmpirical = result.items.some((item) => item.source === "empirical");
   const userAspect = analysis.width / analysis.height;
   const referenceAspect = reference ? reference.analysis.width / reference.analysis.height : null;
+
+  const userLandmarks = analysis.frames[currentIndex]?.landmarks ?? null;
+  const referenceFrameIndex = reference
+    ? mapUserFrameToReference(currentIndex, result.phases, reference.phases, reference.analysis.frame_count)
+    : null;
+  const referenceLandmarks =
+    reference && referenceFrameIndex !== null ? reference.analysis.frames[referenceFrameIndex].landmarks : null;
 
   return (
     <details className="feedback-panel" open>
@@ -53,15 +69,39 @@ export function FeedbackPanel({ result, analysis, reference, referenceStatus, on
         })}
       </div>
 
+      {userLandmarks && (
+        <div className="comparison">
+          <ComparisonDiagram
+            userLandmarks={userLandmarks}
+            userAspect={userAspect}
+            referenceLandmarks={referenceLandmarks}
+            referenceAspect={referenceAspect}
+          />
+          <div className="comparison-legend">
+            <span className="comparison-legend-item">
+              <span className="comparison-swatch comparison-swatch-user" /> You
+            </span>
+            {referenceLandmarks && (
+              <span className="comparison-legend-item">
+                <span className="comparison-swatch comparison-swatch-reference" /> Reference
+              </span>
+            )}
+          </div>
+          <p className="comparison-caption">
+            {referenceStatus === "loading" && "Loading a reference swing to compare against…"}
+            {referenceStatus === "unavailable" &&
+              "Add a matching-view reference swing to your library to see how this swing should look."}
+            {referenceStatus === "loaded" && reference && referenceLandmarks &&
+              `Synced to your ${reference.entry.filename} reference — play, scrub, or use the buttons above to pause at a key moment.`}
+            {referenceStatus === "loaded" && reference && !referenceLandmarks &&
+              "Reference not available at this moment in the swing."}
+          </p>
+        </div>
+      )}
+
       {SCORED_PHASES.map((phase) => {
         const items = result.items.filter((item) => item.phase === phase);
         if (items.length === 0) return null;
-
-        const userFrameIndex = result.phases[phase];
-        const userLandmarks = userFrameIndex !== null ? analysis.frames[userFrameIndex].landmarks : null;
-        const referenceFrameIndex = reference ? reference.phases[phase] : null;
-        const referenceLandmarks =
-          reference && referenceFrameIndex !== null ? reference.analysis.frames[referenceFrameIndex].landmarks : null;
 
         return (
           <div key={phase} className="feedback-group">
@@ -91,37 +131,6 @@ export function FeedbackPanel({ result, analysis, reference, referenceStatus, on
                 )}
               </button>
             ))}
-
-            {userLandmarks && (
-              <div className="comparison">
-                <ComparisonDiagram
-                  userLandmarks={userLandmarks}
-                  userAspect={userAspect}
-                  referenceLandmarks={referenceLandmarks}
-                  referenceAspect={referenceAspect}
-                />
-                <div className="comparison-legend">
-                  <span className="comparison-legend-item">
-                    <span className="comparison-swatch comparison-swatch-user" /> You
-                  </span>
-                  {referenceLandmarks && (
-                    <span className="comparison-legend-item">
-                      <span className="comparison-swatch comparison-swatch-reference" /> Reference
-                    </span>
-                  )}
-                </div>
-                <p className="comparison-caption">
-                  {referenceStatus === "loading" &&
-                    "Loading a reference swing to compare against…"}
-                  {referenceStatus === "unavailable" &&
-                    "Add a matching-view reference swing to your library to see how this phase should look."}
-                  {referenceStatus === "loaded" && reference && referenceLandmarks &&
-                    `Compared against your ${reference.entry.filename} reference.`}
-                  {referenceStatus === "loaded" && reference && !referenceLandmarks &&
-                    "Your reference swing doesn't have this phase detected."}
-                </p>
-              </div>
-            )}
           </div>
         );
       })}
