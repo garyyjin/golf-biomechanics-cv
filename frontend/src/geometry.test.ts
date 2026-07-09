@@ -13,6 +13,7 @@ import {
   findAddressFrame,
   hipLine,
   midpoint,
+  normalizeLandmarksForComparison,
   shoulderLine,
   sideIndices,
   spineLine,
@@ -285,6 +286,58 @@ describe("swingPlaneLine", () => {
       [RIGHT_SHOULDER]: { x: 0.6, y: 0.5 },
     });
     expect(swingPlaneLine(hidden, "right", 1)).toBeNull();
+  });
+});
+
+describe("normalizeLandmarksForComparison", () => {
+  const landmarks = makeLandmarks({
+    [LEFT_SHOULDER]: { x: 0.4, y: 0.3 },
+    [RIGHT_SHOULDER]: { x: 0.6, y: 0.3 },
+    [LEFT_HIP]: { x: 0.4, y: 0.7 },
+    [RIGHT_HIP]: { x: 0.6, y: 0.7 },
+    [LEFT_WRIST]: { x: 0.4, y: 0.9, visibility: 0.2 },
+  });
+
+  it("centers on the hip midpoint with torso length as 1 unit", () => {
+    const result = normalizeLandmarksForComparison(landmarks, 1);
+    expect(result).not.toBeNull();
+    expect(result![LEFT_HIP].x).toBeCloseTo(-0.25, 6);
+    expect(result![LEFT_HIP].y).toBeCloseTo(0, 6);
+    expect(result![LEFT_HIP].visible).toBe(true);
+    expect(result![RIGHT_HIP].x).toBeCloseTo(0.25, 6);
+    expect(result![RIGHT_HIP].y).toBeCloseTo(0, 6);
+    expect(result![LEFT_SHOULDER].y).toBeCloseTo(-1, 6);
+  });
+
+  it("marks low-visibility landmarks as not visible", () => {
+    const result = normalizeLandmarksForComparison(landmarks, 1);
+    expect(result![LEFT_WRIST].visible).toBe(false);
+  });
+
+  it("corrects for aspect ratio", () => {
+    const shifted = makeLandmarks({
+      [LEFT_SHOULDER]: { x: 0.3, y: 0.3 },
+      [RIGHT_SHOULDER]: { x: 0.7, y: 0.3 },
+      [LEFT_HIP]: { x: 0.4, y: 0.7 },
+      [RIGHT_HIP]: { x: 0.6, y: 0.7 },
+    });
+    const aspect2 = normalizeLandmarksForComparison(shifted, 2);
+    const aspect1 = normalizeLandmarksForComparison(shifted, 1);
+    expect(aspect2![LEFT_SHOULDER].x).not.toBeCloseTo(aspect1![LEFT_SHOULDER].x, 3);
+  });
+
+  it("returns null for null landmarks", () => {
+    expect(normalizeLandmarksForComparison(null, 1)).toBeNull();
+  });
+
+  it("returns null when a torso landmark is hidden", () => {
+    const hidden = makeLandmarks({
+      [LEFT_SHOULDER]: { x: 0.4, y: 0.3, visibility: 0.1 },
+      [RIGHT_SHOULDER]: { x: 0.6, y: 0.3 },
+      [LEFT_HIP]: { x: 0.4, y: 0.7 },
+      [RIGHT_HIP]: { x: 0.6, y: 0.7 },
+    });
+    expect(normalizeLandmarksForComparison(hidden, 1)).toBeNull();
   });
 });
 

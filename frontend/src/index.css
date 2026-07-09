@@ -34,9 +34,9 @@ body {
 }
 
 #root {
-  max-width: 960px;
+  max-width: 1320px;
   margin: 0 auto;
-  padding: 3rem 1rem;
+  padding: 3rem 1.5rem;
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
@@ -177,13 +177,24 @@ button:disabled {
 }
 
 .player-main .video-box {
-  flex: 1;
+  flex: 0 1 auto;
   min-width: 0;
+  height: min(70vh, 640px);
+  width: auto;
+  max-width: 100%;
+}
+
+.side-panel {
+  width: 420px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  height: min(70vh, 640px);
+  overflow-y: auto;
 }
 
 .readout-panel {
-  width: 180px;
-  flex: none;
   font-size: 0.8rem;
   display: flex;
   flex-direction: column;
@@ -233,7 +244,7 @@ button:disabled {
 
 .video-box video {
   width: 100%;
-  height: auto;
+  height: 100%;
   display: block;
 }
 
@@ -255,7 +266,19 @@ button:disabled {
 .controls {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  row-gap: 0.5rem;
   gap: 0.75rem;
+}
+
+.speed-group {
+  display: flex;
+  gap: 4px;
+}
+
+.speed-btn {
+  padding: 4px 10px;
+  font-size: 12px;
 }
 
 .scrub {
@@ -317,7 +340,9 @@ button:disabled {
 .feedback-row {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  flex-wrap: wrap;
+  row-gap: 4px;
+  gap: 0.5rem;
   width: 100%;
   text-align: left;
   background: var(--color-surface-alt);
@@ -329,7 +354,8 @@ button:disabled {
 }
 
 .feedback-metric {
-  flex: 1;
+  flex: 1 1 100%;
+  font-weight: 500;
 }
 
 .feedback-value {
@@ -389,6 +415,72 @@ button:disabled {
   background: transparent;
   color: var(--color-mid-gray);
   border: 1px solid var(--color-hairline);
+}
+
+.comparison {
+  margin: 0.25rem 0 1rem;
+}
+
+.comparison-canvas {
+  width: 100%;
+  height: 280px;
+  display: block;
+  background: var(--color-surface-alt);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-nested);
+}
+
+.comparison-legend {
+  display: flex;
+  gap: 10px;
+  margin-top: 0.4rem;
+  font-size: 11px;
+  color: var(--color-mid-gray);
+}
+
+.comparison-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.comparison-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex: none;
+}
+
+.comparison-swatch-user {
+  background: rgb(22, 163, 74);
+}
+
+.comparison-swatch-reference {
+  background: transparent;
+  border: 1.5px dashed rgba(23, 23, 23, 0.5);
+}
+
+.comparison-caption {
+  color: var(--color-mid-gray);
+  font-size: 11px;
+  margin: 0.3rem 0 0;
+}
+
+@media (max-width: 800px) {
+  .player-main {
+    flex-direction: column;
+  }
+
+  .player-main .video-box {
+    width: 100%;
+    height: auto;
+  }
+
+  .side-panel {
+    width: 100%;
+    height: auto;
+    max-height: none;
+  }
 }
 
 .feedback-caption {

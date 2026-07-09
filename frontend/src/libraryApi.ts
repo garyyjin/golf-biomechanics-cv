@@ -69,6 +69,10 @@ export function deleteReferenceSwing(id: string): Promise<RawBenchmarkResponse> 
   return request(`/reference-swings/${id}`, { method: "DELETE" });
 }
 
+export function fetchReferenceAnalysis(id: string): Promise<AnalysisResponse> {
+  return request(`/reference-swings/${id}/analysis`);
+}
+
 export function referenceSwingVideoUrl(id: string): string {
   return `${BASE_URL}/reference-swings/${id}/video`;
 }

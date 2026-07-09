@@ -12,6 +12,7 @@ from app.library import (
     create_entry,
     delete_entry,
     get_benchmarks,
+    get_entry_analysis,
     get_entry_video_path,
     list_entries,
     save_samples,
@@ -115,6 +116,14 @@ def get_reference_swing_video(entry_id: str):
         raise HTTPException(status_code=404, detail="reference swing not found")
     media_type = EXT_MEDIA_TYPES.get(path.suffix.lower(), "application/octet-stream")
     return FileResponse(path, media_type=media_type)
+
+
+@app.get("/reference-swings/{entry_id}/analysis")
+def get_reference_swing_analysis(entry_id: str):
+    analysis = get_entry_analysis(entry_id)
+    if analysis is None:
+        raise HTTPException(status_code=404, detail="reference swing not found")
+    return analysis
 
 
 @app.post("/reference-swings/{entry_id}/samples")
