@@ -18,6 +18,8 @@ interface Props {
   onReset: () => void;
 }
 
+const SPEED_OPTIONS = [0.25, 0.5, 1] as const;
+
 export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -30,8 +32,14 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
   const [time, setTime] = useState(0);
   const [lines, setLines] = useState<OverlayLine[]>([]);
   const [hideVideo, setHideVideo] = useState(false);
+  const [playbackRate, setPlaybackRate] = useState<number>(1);
   const [reference, setReference] = useState<ReferenceSwing | null>(null);
   const [referenceStatus, setReferenceStatus] = useState<ReferenceStatus>("loading");
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (video) video.playbackRate = playbackRate;
+  }, [playbackRate]);
 
   // Auto-picks the most recent matching-view/handedness reference swing from
   // the library (no manual picker) so the feedback panel can show a
@@ -181,7 +189,10 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
   return (
     <div className="player">
       <div className="player-main">
-        <div className={hideVideo ? "video-box hide-video" : "video-box"}>
+        <div
+          className={hideVideo ? "video-box hide-video" : "video-box"}
+          style={{ aspectRatio: aspect }}
+        >
           <video
             ref={videoRef}
             src={videoUrl}
@@ -248,6 +259,19 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
         <span className="frame-label">
           frame {currentIndex + 1}/{frame_count}
         </span>
+        <div className="speed-group" role="radiogroup" aria-label="Playback speed">
+          {SPEED_OPTIONS.map((rate) => (
+            <button
+              key={rate}
+              type="button"
+              className={playbackRate === rate ? "toggle speed-btn selected" : "toggle speed-btn"}
+              aria-pressed={playbackRate === rate}
+              onClick={() => setPlaybackRate(rate)}
+            >
+              {rate}x
+            </button>
+          ))}
+        </div>
         <button
           type="button"
           className={hideVideo ? "toggle selected" : "toggle"}
