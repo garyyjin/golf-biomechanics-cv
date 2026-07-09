@@ -19,6 +19,7 @@ _ROTATE_CODES = {
 
 # MediaPipe Pose landmark indices (mirrors geometry.ts's constants).
 _LEFT_SHOULDER, _RIGHT_SHOULDER = 11, 12
+_LEFT_HIP, _RIGHT_HIP = 23, 24
 _LEFT_WRIST, _RIGHT_WRIST = 15, 16
 _LEFT_INDEX, _RIGHT_INDEX = 19, 20
 _VISIBILITY_THRESHOLD = 0.5
@@ -29,47 +30,75 @@ def _rotation_code(degrees: float) -> int | None:
     return _ROTATE_CODES.get(int(round(degrees)) % 360)
 
 
+def _hand_candidate(landmarks: list[dict], wrist_idx: int, index_idx: int) -> tuple[dict, dict, float] | None:
+    """(wrist, index-knuckle, min-visibility) for one hand, or None if either
+    landmark is below the visibility threshold."""
+    wrist = landmarks[wrist_idx]
+    index_lm = landmarks[index_idx]
+    visibility = min(wrist["visibility"], index_lm["visibility"])
+    if visibility < _VISIBILITY_THRESHOLD:
+        return None
+    return (wrist, index_lm, visibility)
+
+
 def _detect_club_tip(frame, landmarks: list[dict], width: int, height: int) -> dict | None:
     """Approximates the club-head pixel position with a Hough line detection
     anchored near the hands, rather than inferring it purely from body pose.
 
     MediaPipe has no club/shaft detection, so this looks for a real straight
     edge in the pixels: golf shafts are thin, high-contrast lines originating
-    at the hands. A generous ROI around the hands (sized off shoulder width,
-    a stable scale reference) is searched with Canny + probabilistic Hough
-    transform; candidate segments are required to have one endpoint near the
-    hands and to be reasonably aligned with the wrist-to-knuckle direction
-    (the same hand-orientation prior geometry.ts's clubTipEstimate uses) —
-    that alignment check is what rejects sleeve/arm/background edges instead
-    of picking whatever line happens to be nearby.
+    at the hands. A generous ROI around the hands (sized off torso length, a
+    scale reference that stays roughly stable regardless of camera angle —
+    shoulder *width* was tried first but collapses badly in a down-the-line
+    view, where the shoulders are seen almost edge-on) is searched with
+    Canny + probabilistic Hough transform; candidate segments are required
+    to have one endpoint near the hands and to be reasonably aligned with
+    the wrist-to-knuckle direction (the same hand-orientation prior
+    geometry.ts's clubTipEstimate uses) — that alignment check is what
+    rejects sleeve/arm/background edges instead of picking whatever line
+    happens to be nearby.
+
+    Anchors on whichever hand is actually visible rather than requiring
+    both: in anything close to a profile view (down-the-line especially),
+    one hand is very often occluded by the other or by the body, and
+    requiring both left this detecting almost nothing on real down-the-line
+    footage even though the visible hand alone is enough to anchor a search.
 
     Returns None (the frontend then falls back to the body-pose estimate)
-    when hands aren't visible or no confident line is found — motion blur,
-    low contrast, and an occluded club are all realistic failure modes for a
-    technique built on visible edges rather than a trained detector.
+    when neither hand is visible or no confident line is found — motion
+    blur, low contrast, and an occluded club are all realistic failure modes
+    for a technique built on visible edges rather than a trained detector.
     """
-    lw, rw = landmarks[_LEFT_WRIST], landmarks[_RIGHT_WRIST]
-    li, ri = landmarks[_LEFT_INDEX], landmarks[_RIGHT_INDEX]
     ls, rs = landmarks[_LEFT_SHOULDER], landmarks[_RIGHT_SHOULDER]
-    if min(
-        lw["visibility"], rw["visibility"], li["visibility"], ri["visibility"],
-        ls["visibility"], rs["visibility"],
-    ) < _VISIBILITY_THRESHOLD:
+    if min(ls["visibility"], rs["visibility"]) < _VISIBILITY_THRESHOLD:
         return None
 
-    hands_x = (lw["x"] + rw["x"]) / 2 * width
-    hands_y = (lw["y"] + rw["y"]) / 2 * height
-    knuckle_x = (li["x"] + ri["x"]) / 2 * width
-    knuckle_y = (li["y"] + ri["y"]) / 2 * height
+    candidates = [
+        c
+        for c in (
+            _hand_candidate(landmarks, _LEFT_WRIST, _LEFT_INDEX),
+            _hand_candidate(landmarks, _RIGHT_WRIST, _RIGHT_INDEX),
+        )
+        if c is not None
+    ]
+    if not candidates:
+        return None
+    wrist, index_lm, _ = max(candidates, key=lambda c: c[2])
+
+    hands_x, hands_y = wrist["x"] * width, wrist["y"] * height
+    knuckle_x, knuckle_y = index_lm["x"] * width, index_lm["y"] * height
     prior_len = math.hypot(knuckle_x - hands_x, knuckle_y - hands_y)
     if prior_len < 1e-6:
         return None
     prior_dx, prior_dy = (knuckle_x - hands_x) / prior_len, (knuckle_y - hands_y) / prior_len
 
-    shoulder_width = math.hypot((ls["x"] - rs["x"]) * width, (ls["y"] - rs["y"]) * height)
-    if shoulder_width < 1:
+    lh, rh = landmarks[_LEFT_HIP], landmarks[_RIGHT_HIP]
+    shoulder_mid = ((ls["x"] + rs["x"]) / 2 * width, (ls["y"] + rs["y"]) / 2 * height)
+    hip_mid = ((lh["x"] + rh["x"]) / 2 * width, (lh["y"] + rh["y"]) / 2 * height)
+    torso_length = math.hypot(shoulder_mid[0] - hip_mid[0], shoulder_mid[1] - hip_mid[1])
+    if torso_length < 1:
         return None
-    radius = shoulder_width * 3.2
+    radius = torso_length * 2.0
 
     x0, y0 = max(0, int(hands_x - radius)), max(0, int(hands_y - radius))
     x1, y1 = min(width, int(hands_x + radius)), min(height, int(hands_y + radius))
