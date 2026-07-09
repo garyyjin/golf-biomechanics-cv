@@ -196,7 +196,7 @@ export function drawComparisonSkeletons(
   // biased toward the top and the scale kept conservative so a portrait
   // (taller-than-wide) canvas fits the full body without clipping feet.
   const cy = cssHeight * 0.4;
-  const unitScale = Math.min(cssWidth, cssHeight) * 0.3;
+  const unitScale = Math.min(cssWidth, cssHeight) * 0.27;
 
   drawNormalizedSkeleton(
     ctx,

@@ -200,33 +200,35 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
           <canvas ref={canvasRef} className="overlay" />
         </div>
 
-        <aside className="readout-panel">
-          <h2>{view === "face_on" ? "Face-on" : "Down-the-line"}</h2>
-          {lines.map((line) => (
-            <div key={line.id} className="readout-row">
-              <span className="swatch" style={{ background: LINE_COLORS[line.id] }} />
-              <span>{line.label}</span>
-              <span className="value">
-                {line.angleDeg !== null ? `${line.angleDeg.toFixed(1)}°` : "—"}
-              </span>
-            </div>
-          ))}
-          {view === "down_the_line" && (
-            <p className="readout-note">
-              Plane is a body-only approximation — most accurate with the camera aligned to
-              the target line
-            </p>
-          )}
-        </aside>
-      </div>
+        <div className="side-panel">
+          <aside className="readout-panel">
+            <h2>{view === "face_on" ? "Face-on" : "Down-the-line"}</h2>
+            {lines.map((line) => (
+              <div key={line.id} className="readout-row">
+                <span className="swatch" style={{ background: LINE_COLORS[line.id] }} />
+                <span>{line.label}</span>
+                <span className="value">
+                  {line.angleDeg !== null ? `${line.angleDeg.toFixed(1)}°` : "—"}
+                </span>
+              </div>
+            ))}
+            {view === "down_the_line" && (
+              <p className="readout-note">
+                Plane is a body-only approximation — most accurate with the camera aligned to
+                the target line
+              </p>
+            )}
+          </aside>
 
-      <FeedbackPanel
-        result={feedback}
-        analysis={analysis}
-        reference={reference}
-        referenceStatus={referenceStatus}
-        onSeekToFrame={(frameIndex) => seekTo(frames[frameIndex].t)}
-      />
+          <FeedbackPanel
+            result={feedback}
+            analysis={analysis}
+            reference={reference}
+            referenceStatus={referenceStatus}
+            onSeekToFrame={(frameIndex) => seekTo(frames[frameIndex].t)}
+          />
+        </div>
+      </div>
 
       <div className="controls">
         <button type="button" onClick={togglePlay}>

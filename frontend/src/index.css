@@ -181,9 +181,17 @@ button:disabled {
   min-width: 0;
 }
 
-.readout-panel {
-  width: 180px;
+.side-panel {
+  width: 340px;
   flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.readout-panel {
   font-size: 0.8rem;
   display: flex;
   flex-direction: column;
@@ -302,15 +310,7 @@ button:disabled {
 }
 
 .feedback-group {
-  display: flex;
-  align-items: flex-start;
-  gap: 1rem;
   margin-top: 0.75rem;
-}
-
-.feedback-group-metrics {
-  flex: 1;
-  min-width: 0;
 }
 
 .feedback-group h3 {
@@ -325,7 +325,9 @@ button:disabled {
 .feedback-row {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  flex-wrap: wrap;
+  row-gap: 4px;
+  gap: 0.5rem;
   width: 100%;
   text-align: left;
   background: var(--color-surface-alt);
@@ -337,7 +339,8 @@ button:disabled {
 }
 
 .feedback-metric {
-  flex: 1;
+  flex: 1 1 100%;
+  font-weight: 500;
 }
 
 .feedback-value {
@@ -400,13 +403,12 @@ button:disabled {
 }
 
 .comparison {
-  flex: none;
-  width: 200px;
+  margin-top: 0.4rem;
 }
 
 .comparison-canvas {
   width: 100%;
-  height: 240px;
+  height: 220px;
   display: block;
   background: var(--color-surface-alt);
   border: 1px solid var(--color-hairline);
@@ -449,13 +451,14 @@ button:disabled {
   margin: 0.3rem 0 0;
 }
 
-@media (max-width: 640px) {
-  .feedback-group {
+@media (max-width: 800px) {
+  .player-main {
     flex-direction: column;
   }
 
-  .comparison {
+  .side-panel {
     width: 100%;
+    max-height: none;
   }
 }
 
