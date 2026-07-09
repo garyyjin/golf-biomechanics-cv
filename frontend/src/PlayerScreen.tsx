@@ -14,7 +14,7 @@ import {
   isDownTheLineMisaligned,
 } from "./geometry";
 import type { OverlayLine, Point } from "./geometry";
-import { LandmarkSmoother } from "./smoothing";
+import { LandmarkSmoother, PointSmoother } from "./smoothing";
 import type { AnalysisResponse } from "./types";
 
 interface Props {
@@ -32,6 +32,7 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const smootherRef = useRef(new LandmarkSmoother());
+  const clubPointSmootherRef = useRef(new PointSmoother());
   const clubTrailRef = useRef<Point[]>([]);
   const prevIndexRef = useRef<number | null>(null);
   const { fps, frame_count, frames, view, handedness, width, height } = analysis;
@@ -119,7 +120,11 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
       }
       prevIndexRef.current = index;
 
-      const tip = clubTipEstimate(smoothed, handedness);
+      // Prefer the backend's Hough-line detection; fall back to the
+      // body-pose estimate when no confident line was found for this frame.
+      const detectedTip = frames[index].club_tip ?? null;
+      const rawTip = detectedTip ?? clubTipEstimate(smoothed, handedness);
+      const tip = clubPointSmootherRef.current.apply(rawTip, index);
       if (tip) {
         clubTrailRef.current = [...clubTrailRef.current, tip].slice(-CLUB_TRAIL_MAX_LENGTH);
       }
@@ -300,7 +305,7 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
             ))}
             <div className="readout-row">
               <span className="swatch" style={{ background: "rgb(255, 199, 44)" }} />
-              <span>Club (approx)</span>
+              <span>Club (detected, or approx. when unclear)</span>
             </div>
             {view === "down_the_line" && (
               <p className="readout-note">

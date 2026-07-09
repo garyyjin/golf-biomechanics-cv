@@ -55,11 +55,14 @@ export function FeedbackPanel({
   const referenceAspect = reference ? reference.analysis.width / reference.analysis.height : null;
 
   const userLandmarks = analysis.frames[currentIndex]?.landmarks ?? null;
+  const userDetectedTip = analysis.frames[currentIndex]?.club_tip ?? null;
   const referenceFrameIndex = reference
     ? mapUserFrameToReference(currentIndex, result.phases, reference.phases, reference.analysis.frame_count)
     : null;
-  const referenceLandmarks =
-    reference && referenceFrameIndex !== null ? reference.analysis.frames[referenceFrameIndex].landmarks : null;
+  const referenceFrame =
+    reference && referenceFrameIndex !== null ? reference.analysis.frames[referenceFrameIndex] : null;
+  const referenceLandmarks = referenceFrame?.landmarks ?? null;
+  const referenceDetectedTip = referenceFrame?.club_tip ?? null;
 
   return (
     <details className="feedback-panel" open>
@@ -100,9 +103,11 @@ export function FeedbackPanel({
             userLandmarks={userLandmarks}
             userAspect={userAspect}
             userHandedness={analysis.handedness}
+            userDetectedTip={userDetectedTip}
             referenceLandmarks={referenceLandmarks}
             referenceAspect={referenceAspect}
             referenceHandedness={reference?.analysis.handedness ?? null}
+            referenceDetectedTip={referenceDetectedTip}
           />
           <div className="comparison-legend">
             <span className="comparison-legend-item">
@@ -114,7 +119,7 @@ export function FeedbackPanel({
               </span>
             )}
             <span className="comparison-legend-item">
-              <span className="comparison-swatch comparison-swatch-club" /> Club (approx)
+              <span className="comparison-swatch comparison-swatch-club" /> Club
             </span>
           </div>
           <p className="comparison-caption">

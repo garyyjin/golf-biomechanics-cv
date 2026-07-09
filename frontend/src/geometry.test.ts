@@ -440,6 +440,20 @@ describe("clubSegmentForComparison", () => {
     expect(segment!.tip.y).toBeCloseTo(-1.85, 6);
   });
 
+  it("uses a provided detected tip instead of the body-pose estimate", () => {
+    const segment = clubSegmentForComparison(landmarks, "right", 1, { x: 0.9, y: 0.9 });
+    expect(segment).not.toBeNull();
+    // detected tip (0.9,0.9) -> ((0.9-0.5)/0.4, (0.9-0.7)/0.4)
+    expect(segment!.tip.x).toBeCloseTo(1, 6);
+    expect(segment!.tip.y).toBeCloseTo(0.5, 6);
+  });
+
+  it("falls back to the body-pose estimate when detectedTip is null", () => {
+    const withEstimate = clubSegmentForComparison(landmarks, "right", 1);
+    const withNullDetected = clubSegmentForComparison(landmarks, "right", 1, null);
+    expect(withNullDetected).toEqual(withEstimate);
+  });
+
   it("returns null for null landmarks", () => {
     expect(clubSegmentForComparison(null, "right", 1)).toBeNull();
   });

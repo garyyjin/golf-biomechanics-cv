@@ -13,6 +13,12 @@ export interface PoseFrame {
   index: number;
   t: number;
   landmarks: Landmark[] | null;
+  // Normalized [0,1] point from the backend's Hough-line club detection
+  // (see backend/app/pose.py's _detect_club_tip), or null/absent when no
+  // confident line was found — callers fall back to a body-pose-based
+  // estimate (geometry.ts's clubTipEstimate) in that case. Optional so
+  // test fixtures that predate this field don't all need updating.
+  club_tip?: { x: number; y: number } | null;
 }
 
 export interface AnalysisResponse {

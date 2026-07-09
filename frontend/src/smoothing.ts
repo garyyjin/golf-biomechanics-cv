@@ -58,3 +58,47 @@ export class LandmarkSmoother {
     this.previousIndex = -1;
   }
 }
+
+/**
+ * Same exponential-smoothing/discontinuity-reset shape as LandmarkSmoother,
+ * for a single 2D point instead of a landmark array — used for the club-tip
+ * tracer, whose position (whether Hough-detected or body-pose-estimated)
+ * isn't otherwise touched by LandmarkSmoother and can jitter frame to frame.
+ */
+export class PointSmoother {
+  private previous: { x: number; y: number } | null = null;
+  private previousIndex = -1;
+
+  apply(point: { x: number; y: number } | null, frameIndex: number): { x: number; y: number } | null {
+    if (point === null) {
+      this.reset();
+      return null;
+    }
+
+    const continuous =
+      this.previous !== null &&
+      (frameIndex === this.previousIndex || frameIndex === this.previousIndex + 1);
+
+    let result: { x: number; y: number };
+    if (!continuous) {
+      result = point;
+    } else if (frameIndex === this.previousIndex) {
+      return this.previous;
+    } else {
+      const prev = this.previous!;
+      result = {
+        x: prev.x + ALPHA * (point.x - prev.x),
+        y: prev.y + ALPHA * (point.y - prev.y),
+      };
+    }
+
+    this.previous = result;
+    this.previousIndex = frameIndex;
+    return result;
+  }
+
+  reset(): void {
+    this.previous = null;
+    this.previousIndex = -1;
+  }
+}

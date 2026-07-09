@@ -325,13 +325,18 @@ export interface ClubSegment {
   tip: NormalizedPoint;
 }
 
-/** Hands-to-club-tip segment in the same normalized comparison space as
+/**
+ * Hands-to-club-tip segment in the same normalized comparison space as
  * normalizeLandmarksForComparison, for drawing alongside a comparison
- * skeleton. */
+ * skeleton. Pass `detectedTip` (the backend's Hough-line detection, when
+ * available) to use it instead of the body-pose estimate — same
+ * detected-first, heuristic-fallback policy as the main video overlay.
+ */
 export function clubSegmentForComparison(
   landmarks: Landmark[] | null,
   handedness: Handedness,
   aspect: number,
+  detectedTip?: Point | null,
 ): ClubSegment | null {
   if (!landmarks) return null;
   const transform = computeComparisonTransform(landmarks, aspect);
@@ -340,7 +345,7 @@ export function clubSegmentForComparison(
   const side = sideIndices(handedness);
   const lw = visiblePoint(landmarks, side.leadWrist);
   const tw = visiblePoint(landmarks, side.trailWrist);
-  const tip = clubTipEstimate(landmarks, handedness);
+  const tip = detectedTip ?? clubTipEstimate(landmarks, handedness);
   if (!lw || !tw || !tip) return null;
 
   return {
