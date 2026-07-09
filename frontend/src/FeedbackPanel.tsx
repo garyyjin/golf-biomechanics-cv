@@ -1,9 +1,10 @@
 import { ComparisonDiagram } from "./ComparisonDiagram";
 import { mapUserFrameToReference } from "./comparison";
 import type { ReferenceSwing } from "./comparison";
+import { getCoachingTip } from "./coachingTips";
 import { PHASE_LABELS, PHASE_ORDER, SCORED_PHASES } from "./feedback";
 import type { FeedbackItem, FeedbackResult } from "./feedback";
-import type { AnalysisResponse } from "./types";
+import type { AnalysisResponse, View } from "./types";
 
 export type ReferenceStatus = "loading" | "loaded" | "unavailable";
 
@@ -27,6 +28,17 @@ const SOURCE_LABEL: Record<NonNullable<FeedbackItem["source"]>, string> = {
   empirical: "Library",
   published: "Default",
 };
+
+/** Plain-English headline for a feedback row — the primary content a
+ * beginner reads, with the raw number/range demoted to secondary detail. */
+function tipFor(item: FeedbackItem, view: View): string {
+  if (item.status === "undetected") return "We couldn't spot this moment in your swing.";
+  if (item.status === "within") return `${item.metricLabel} looks good here — keep it up.`;
+  return (
+    getCoachingTip(view, item.phase, item.metric, item.status) ??
+    `${item.metricLabel} is ${item.status} the target range here.`
+  );
+}
 
 export function FeedbackPanel({
   result,
@@ -112,23 +124,27 @@ export function FeedbackPanel({
                 type="button"
                 className="feedback-row"
                 disabled={item.frameIndex === null}
+                title={STATUS_LABEL[item.status]}
                 onClick={() => item.frameIndex !== null && onSeekToFrame(item.frameIndex)}
               >
-                <span className="feedback-metric">{item.metricLabel}</span>
-                <span className="feedback-value">
-                  {item.value !== null ? `${item.value.toFixed(1)}°` : "—"}
-                </span>
-                <span className={`feedback-status feedback-status-${item.status}`}>
-                  {STATUS_LABEL[item.status]}
-                </span>
-                <span className="feedback-range">
-                  {item.range ? `target ${item.range.min.toFixed(0)}–${item.range.max.toFixed(0)}°` : ""}
-                </span>
-                {item.source && (
-                  <span className={`feedback-source feedback-source-${item.source}`}>
-                    {SOURCE_LABEL[item.source]}
-                  </span>
-                )}
+                <div className="feedback-row-main">
+                  <span className={`feedback-dot feedback-dot-${item.status}`} />
+                  <span className="feedback-tip">{tipFor(item, analysis.view)}</span>
+                </div>
+                <div className="feedback-row-detail">
+                  <span>{item.metricLabel}</span>
+                  {item.value !== null && <span>{item.value.toFixed(1)}°</span>}
+                  {item.range && (
+                    <span>
+                      target {item.range.min.toFixed(0)}–{item.range.max.toFixed(0)}°
+                    </span>
+                  )}
+                  {item.source && (
+                    <span className={`feedback-source feedback-source-${item.source}`}>
+                      {SOURCE_LABEL[item.source]}
+                    </span>
+                  )}
+                </div>
               </button>
             ))}
           </div>

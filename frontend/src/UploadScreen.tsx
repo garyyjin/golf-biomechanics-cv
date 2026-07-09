@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { analyzeVideo } from "./api";
+import { FileField } from "./FileField";
 import type { AnalysisResponse, Handedness, Quality, View } from "./types";
 
 interface Props {
@@ -49,15 +50,13 @@ export function UploadScreen({ onAnalyzed }: Props) {
     <div className="upload">
       <h1>Golf Swing Analyzer</h1>
 
-      <label className="field">
-        <span>Swing video (mp4, mov or webm)</span>
-        <input
-          type="file"
-          accept=".mp4,.mov,.webm,video/mp4,video/quicktime,video/webm"
-          disabled={processing}
-          onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-        />
-      </label>
+      <FileField
+        label="Swing video (mp4, mov or webm)"
+        file={file}
+        accept=".mp4,.mov,.webm,video/mp4,video/quicktime,video/webm"
+        disabled={processing}
+        onChange={setFile}
+      />
 
       <div className="field">
         <span>Camera view</span>
