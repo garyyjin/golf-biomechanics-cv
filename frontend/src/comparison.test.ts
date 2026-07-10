@@ -1,15 +1,21 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { findLatestReferenceSwing, mapUserFrameToReference } from "./comparison";
+import {
+  loadReferenceSwing,
+  mapUserFrameToReference,
+  matchingReferenceEntries,
+  referenceSeekTime,
+} from "./comparison";
 import { LEFT_WRIST, RIGHT_WRIST } from "./geometry";
+import type { LibraryEntry } from "./libraryApi";
 import type { SwingPhases } from "./phases";
 import { makeLandmarks } from "./testUtils";
-import type { PoseFrame } from "./types";
+import type { AnalysisResponse, PoseFrame } from "./types";
 
 afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const ENTRIES = [
+const ENTRIES: LibraryEntry[] = [
   { id: "old", filename: "old.mp4", view: "face_on", handedness: "right", createdAt: "2026-01-01T00:00:00Z" },
   { id: "new", filename: "new.mp4", view: "face_on", handedness: "right", createdAt: "2026-06-01T00:00:00Z" },
   { id: "other-view", filename: "dtl.mp4", view: "down_the_line", handedness: "right", createdAt: "2026-07-01T00:00:00Z" },
@@ -54,20 +60,41 @@ function stubFetch() {
   );
 }
 
-describe("findLatestReferenceSwing", () => {
-  it("picks the most recently created matching-view/handedness entry", async () => {
-    stubFetch();
-    const result = await findLatestReferenceSwing("face_on", "right");
-    expect(result).not.toBeNull();
-    expect(result!.entry.id).toBe("new");
-    expect(result!.analysis.view).toBe("face_on");
-    expect(result!.phases.address).toBe(0);
+describe("matchingReferenceEntries", () => {
+  it("filters to matching view/handedness and sorts newest first", () => {
+    const matches = matchingReferenceEntries(ENTRIES, "face_on", "right");
+    expect(matches.map((e) => e.id)).toEqual(["new", "old"]);
   });
 
-  it("returns null when no entry matches the view/handedness", async () => {
+  it("returns an empty list when no entry matches", () => {
+    expect(matchingReferenceEntries(ENTRIES, "down_the_line", "left")).toEqual([]);
+  });
+});
+
+describe("loadReferenceSwing", () => {
+  it("fetches the entry's analysis and detects its phases", async () => {
     stubFetch();
-    const result = await findLatestReferenceSwing("down_the_line", "left");
-    expect(result).toBeNull();
+    const result = await loadReferenceSwing(ENTRIES[1]);
+    expect(result.entry.id).toBe("new");
+    expect(result.analysis.view).toBe("face_on");
+    expect(result.phases.address).toBe(0);
+  });
+});
+
+describe("referenceSeekTime", () => {
+  const analysis = {
+    fps: FPS,
+    frames: frames(Array.from({ length: 60 }, () => 0.5)),
+  } as AnalysisResponse;
+
+  it("nudges a quarter-frame past the frame's timestamp", () => {
+    expect(referenceSeekTime(analysis, 10)).toBeCloseTo(10 / FPS + 0.25 / FPS);
+  });
+
+  it("rounds back to the requested index", () => {
+    for (const index of [0, 1, 29, 59]) {
+      expect(Math.round(referenceSeekTime(analysis, index) * FPS)).toBe(index);
+    }
   });
 });
 

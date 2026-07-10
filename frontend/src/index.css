@@ -269,6 +269,93 @@ button:disabled {
   max-width: 100%;
 }
 
+/* Compare mode: two videos side by side, phase-synced. */
+
+.video-column.comparing {
+  flex: 1 1 auto;
+  width: 100%;
+}
+
+.video-single {
+  display: contents;
+}
+
+.video-pair {
+  display: flex;
+  gap: 0.75rem;
+  width: 100%;
+  align-items: flex-start;
+  justify-content: center;
+}
+
+.video-slot {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.video-slot-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-height: 1.6rem;
+}
+
+.video-slot-label {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--color-mid-gray);
+}
+
+.reference-picker {
+  min-width: 0;
+  max-width: 100%;
+  font-size: 0.8rem;
+  font-family: inherit;
+  padding: 4px 10px;
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-nested);
+  background: var(--color-paper);
+  color: inherit;
+}
+
+.video-slot-caption {
+  color: var(--color-mid-gray);
+  font-size: 0.7rem;
+  line-height: 1.4;
+  margin: 0;
+}
+
+/* Width-driven sizing (the single-video height rule can't fit two boxes);
+   the inline aspect-ratio sets the height. Cap width so the box never grows
+   taller than the single-video height. Constrain by width only — a
+   max-height on an aspect-ratio box would desync the overlay canvas. */
+.player-main .video-pair .video-box {
+  height: auto;
+  width: 100%;
+  max-width: calc(min(70vh, 640px) * var(--video-aspect, 0.6));
+  margin-inline: auto;
+}
+
+.video-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+}
+
+.video-placeholder p {
+  color: var(--color-mid-gray);
+  font-size: 0.8rem;
+  line-height: 1.4;
+  margin: 0;
+}
+
 .side-panel {
   flex: 1 1 420px;
   max-width: 640px;
@@ -577,6 +664,14 @@ button:disabled {
   .player-main .video-box {
     width: 100%;
     height: auto;
+  }
+
+  .video-pair {
+    flex-direction: column;
+  }
+
+  .player-main .video-pair .video-box {
+    max-width: 100%;
   }
 
   .side-panel {

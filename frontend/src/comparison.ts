@@ -1,5 +1,5 @@
 import { PHASE_ORDER } from "./feedback.ts";
-import { fetchReferenceAnalysis, listReferenceSwings } from "./libraryApi.ts";
+import { fetchReferenceAnalysis } from "./libraryApi.ts";
 import type { LibraryEntry } from "./libraryApi.ts";
 import { detectPhases } from "./phases.ts";
 import type { SwingPhases } from "./phases.ts";
@@ -12,24 +12,36 @@ export interface ReferenceSwing {
 }
 
 /**
- * Picks the most recently uploaded reference-library swing matching the
- * given view/handedness and returns its full analysis plus detected phases,
- * or null if the library has no matching entry. There's no manual picker —
- * "most recent" is the whole selection policy, matching the rest of this
- * app's automatic (no-button) library behavior.
+ * Library entries comparable with a swing of the given view/handedness,
+ * newest first. Cross-view comparison is visually meaningless and mixed
+ * handedness would mirror every angle, so both must match. The first entry
+ * is the default selection, preserving the old "most recent" auto-pick.
  */
-export async function findLatestReferenceSwing(
+export function matchingReferenceEntries(
+  entries: LibraryEntry[],
   view: View,
   handedness: Handedness,
-): Promise<ReferenceSwing | null> {
-  const entries = await listReferenceSwings();
-  const matches = entries.filter((e) => e.view === view && e.handedness === handedness);
-  if (matches.length === 0) return null;
+): LibraryEntry[] {
+  return entries
+    .filter((e) => e.view === view && e.handedness === handedness)
+    .sort((a, b) => (a.createdAt > b.createdAt ? -1 : a.createdAt < b.createdAt ? 1 : 0));
+}
 
-  const latest = matches.reduce((a, b) => (a.createdAt > b.createdAt ? a : b));
-  const analysis = await fetchReferenceAnalysis(latest.id);
+/** Fetches a library entry's full analysis and detects its swing phases. */
+export async function loadReferenceSwing(entry: LibraryEntry): Promise<ReferenceSwing> {
+  const analysis = await fetchReferenceAnalysis(entry.id);
   const phases = detectPhases(analysis.frames, analysis.handedness, analysis.fps);
-  return { entry: latest, analysis, phases };
+  return { entry, analysis, phases };
+}
+
+/**
+ * Time to seek a paused reference video to for a given frame index. Nudged a
+ * quarter-frame past the frame boundary so that round(currentTime * fps)
+ * lands back on the requested index after the seek — the same trick the
+ * player's frame stepper uses to avoid rounding-boundary flips.
+ */
+export function referenceSeekTime(analysis: AnalysisResponse, refIndex: number): number {
+  return analysis.frames[refIndex].t + 0.25 / analysis.fps;
 }
 
 /**

@@ -1,20 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BenchmarkTable } from "./benchmarks";
-import { findLatestReferenceSwing } from "./comparison";
+import { loadReferenceSwing, mapUserFrameToReference, matchingReferenceEntries } from "./comparison";
 import type { ReferenceSwing } from "./comparison";
-import { LINE_COLORS, drawClubTracer, drawOverlayLines, drawSkeleton } from "./draw";
+import { LINE_COLORS } from "./draw";
 import { FeedbackPanel } from "./FeedbackPanel";
 import type { ReferenceStatus } from "./FeedbackPanel";
 import { computeFeedback } from "./feedback";
-import {
-  clubTipEstimate,
-  computeAddressRefs,
-  computeOverlayLines,
-  findAddressFrame,
-  isDownTheLineMisaligned,
-} from "./geometry";
-import type { OverlayLine, Point } from "./geometry";
-import { LandmarkSmoother, PointSmoother } from "./smoothing";
+import { computeAddressRefs, findAddressFrame, isDownTheLineMisaligned } from "./geometry";
+import type { OverlayLine } from "./geometry";
+import { listReferenceSwings } from "./libraryApi";
+import type { LibraryEntry } from "./libraryApi";
+import { createOverlayRenderState, renderOverlayFrame } from "./overlayRenderer";
+import { ReferenceVideo } from "./ReferenceVideo";
 import type { AnalysisResponse } from "./types";
 
 interface Props {
@@ -25,16 +22,11 @@ interface Props {
 }
 
 const SPEED_OPTIONS = [0.25, 0.5, 1] as const;
-const CLUB_TRAIL_MAX_LENGTH = 18;
-const CLUB_TRAIL_JUMP_THRESHOLD = 2;
 
 export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const smootherRef = useRef(new LandmarkSmoother());
-  const clubPointSmootherRef = useRef(new PointSmoother());
-  const clubTrailRef = useRef<Point[]>([]);
-  const prevIndexRef = useRef<number | null>(null);
+  const rendererStateRef = useRef(createOverlayRenderState());
   const { fps, frame_count, frames, view, handedness, width, height } = analysis;
   const aspect = width / height;
 
@@ -46,23 +38,33 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
   const [playbackRate, setPlaybackRate] = useState<number>(1);
   const [reference, setReference] = useState<ReferenceSwing | null>(null);
   const [referenceStatus, setReferenceStatus] = useState<ReferenceStatus>("loading");
+  const [referenceEntries, setReferenceEntries] = useState<LibraryEntry[]>([]);
+  const [selectedReferenceId, setSelectedReferenceId] = useState<string | null>(null);
+  const [compareMode, setCompareMode] = useState(false);
 
   useEffect(() => {
     const video = videoRef.current;
     if (video) video.playbackRate = playbackRate;
   }, [playbackRate]);
 
-  // Auto-picks the most recent matching-view/handedness reference swing from
-  // the library (no manual picker) so the feedback panel can show a
-  // normalized skeleton comparison alongside each scored phase.
+  // One shared reference selection drives everything reference-based: the
+  // side-by-side compare video, the feedback panel's normalized skeleton
+  // comparison, and its captions. Defaults to the most recent matching
+  // view/handedness entry (the pre-picker auto-selection policy).
   useEffect(() => {
     let cancelled = false;
     setReferenceStatus("loading");
-    findLatestReferenceSwing(view, handedness)
-      .then((result) => {
+    listReferenceSwings()
+      .then((entries) => {
         if (cancelled) return;
-        setReference(result);
-        setReferenceStatus(result ? "loaded" : "unavailable");
+        const matches = matchingReferenceEntries(entries, view, handedness);
+        setReferenceEntries(matches);
+        if (matches.length === 0) {
+          setReference(null);
+          setReferenceStatus("unavailable");
+        } else {
+          setSelectedReferenceId(matches[0].id);
+        }
       })
       .catch(() => {
         if (cancelled) return;
@@ -73,6 +75,27 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
       cancelled = true;
     };
   }, [view, handedness]);
+
+  useEffect(() => {
+    const entry = referenceEntries.find((e) => e.id === selectedReferenceId);
+    if (!entry) return;
+    let cancelled = false;
+    setReferenceStatus("loading");
+    loadReferenceSwing(entry)
+      .then((result) => {
+        if (cancelled) return;
+        setReference(result);
+        setReferenceStatus("loaded");
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setReference(null);
+        setReferenceStatus("unavailable");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedReferenceId, referenceEntries]);
 
   // Fixed address-frame references (sway line, swing plane) computed once
   // from the raw landmarks.
@@ -103,32 +126,20 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
       const canvas = canvasRef.current;
       const ctx = canvas?.getContext("2d");
       if (!canvas || !ctx) return;
-      const cssWidth = canvas.clientWidth;
-      const cssHeight = canvas.clientHeight;
       const index = frameIndexAt(mediaTime);
-      const smoothed = smootherRef.current.apply(frames[index].landmarks, index);
-      const overlay = computeOverlayLines(view, smoothed, handedness, aspect, addressRefs);
-      drawSkeleton(ctx, smoothed, cssWidth, cssHeight);
-      drawOverlayLines(ctx, overlay, cssWidth, cssHeight);
+      const overlay = renderOverlayFrame(
+        ctx,
+        canvas.clientWidth,
+        canvas.clientHeight,
+        index,
+        frames,
+        view,
+        handedness,
+        aspect,
+        addressRefs,
+        rendererStateRef.current,
+      );
       setLines(overlay);
-
-      // A big jump (scrub/seek) starts a fresh tracer instead of drawing a
-      // straight streak across the skipped frames.
-      const prevIndex = prevIndexRef.current;
-      if (prevIndex === null || Math.abs(index - prevIndex) > CLUB_TRAIL_JUMP_THRESHOLD) {
-        clubTrailRef.current = [];
-      }
-      prevIndexRef.current = index;
-
-      // Prefer the backend's Hough-line detection; fall back to the
-      // body-pose estimate when no confident line was found for this frame.
-      const detectedTip = frames[index].club_tip ?? null;
-      const rawTip = detectedTip ?? clubTipEstimate(smoothed, handedness);
-      const tip = clubPointSmootherRef.current.apply(rawTip, index);
-      if (tip) {
-        clubTrailRef.current = [...clubTrailRef.current, tip].slice(-CLUB_TRAIL_MAX_LENGTH);
-      }
-      drawClubTracer(ctx, clubTrailRef.current, cssWidth, cssHeight);
     },
     [frames, frameIndexAt, view, handedness, aspect, addressRefs],
   );
@@ -224,30 +235,93 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
 
   const currentIndex = frameIndexAt(time);
 
+  // Frame in the reference swing showing the "same moment" as the user's
+  // current frame — the sync input for the side-by-side compare video.
+  // setTime fires from the frame-callback loop, onTimeUpdate, and onSeeked,
+  // so playback, scrubbing, stepping, and phase-chip seeks all flow through.
+  const referenceFrameIndex = useMemo(
+    () =>
+      reference
+        ? mapUserFrameToReference(
+            currentIndex,
+            feedback.phases,
+            reference.phases,
+            reference.analysis.frame_count,
+          )
+        : null,
+    [reference, currentIndex, feedback.phases],
+  );
+
+  const comparing = compareMode && referenceStatus !== "unavailable";
+
   return (
     <div className="player">
       <div className="player-main">
-        <div className="video-column">
-          <div
-            className={hideVideo ? "video-box hide-video" : "video-box"}
-            style={{ aspectRatio: aspect }}
-          >
-            <video
-              ref={videoRef}
-              src={videoUrl}
-              playsInline
-              onPlay={() => setPlaying(true)}
-              onPause={() => setPlaying(false)}
-              onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
-              onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}
-              onSeeked={(e) => {
-                // Covers paused scrubs in browsers that don't fire a video frame
-                // callback for them.
-                drawAt(e.currentTarget.currentTime);
-                setTime(e.currentTarget.currentTime);
-              }}
-            />
-            <canvas ref={canvasRef} className="overlay" />
+        <div className={comparing ? "video-column comparing" : "video-column"}>
+          <div className={comparing ? "video-pair" : "video-single"}>
+            <div className="video-slot">
+              {comparing && (
+                <div className="video-slot-header">
+                  <span className="video-slot-label">Your swing</span>
+                </div>
+              )}
+              <div
+                className={hideVideo ? "video-box hide-video" : "video-box"}
+                style={{ aspectRatio: aspect, "--video-aspect": aspect } as React.CSSProperties}
+              >
+                <video
+                  ref={videoRef}
+                  src={videoUrl}
+                  playsInline
+                  onPlay={() => setPlaying(true)}
+                  onPause={() => setPlaying(false)}
+                  onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
+                  onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}
+                  onSeeked={(e) => {
+                    // Covers paused scrubs in browsers that don't fire a video frame
+                    // callback for them.
+                    drawAt(e.currentTarget.currentTime);
+                    setTime(e.currentTarget.currentTime);
+                  }}
+                />
+                <canvas ref={canvasRef} className="overlay" />
+              </div>
+            </div>
+
+            {comparing && (
+              <div className="video-slot">
+                <div className="video-slot-header">
+                  <span className="video-slot-label">Reference</span>
+                  <select
+                    className="reference-picker"
+                    aria-label="Reference swing"
+                    value={selectedReferenceId ?? ""}
+                    onChange={(e) => setSelectedReferenceId(e.target.value)}
+                  >
+                    {referenceEntries.map((entry) => (
+                      <option key={entry.id} value={entry.id}>
+                        {entry.filename} · {new Date(entry.createdAt).toLocaleDateString()}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {reference && referenceStatus === "loaded" ? (
+                  <ReferenceVideo
+                    key={reference.entry.id}
+                    reference={reference}
+                    targetFrameIndex={referenceFrameIndex}
+                    hideVideo={hideVideo}
+                  />
+                ) : (
+                  <div
+                    className="video-box video-placeholder"
+                    style={{ aspectRatio: aspect, "--video-aspect": aspect } as React.CSSProperties}
+                  >
+                    <p>Loading reference…</p>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="controls">
@@ -287,6 +361,20 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
               onClick={() => setHideVideo((v) => !v)}
             >
               Skeleton only
+            </button>
+            <button
+              type="button"
+              className={compareMode ? "toggle selected" : "toggle"}
+              aria-pressed={compareMode}
+              disabled={referenceStatus === "unavailable"}
+              title={
+                referenceStatus === "unavailable"
+                  ? "Add a matching-view reference swing to your library to compare"
+                  : undefined
+              }
+              onClick={() => setCompareMode((v) => !v)}
+            >
+              Compare
             </button>
           </div>
         </div>
