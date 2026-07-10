@@ -1,25 +1,46 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { referenceSeekTime } from "./comparison";
-import type { ReferenceSwing } from "./comparison";
+import type { RefObject } from "react";
+import {
+  CATCHUP_SEEK_THRESHOLD,
+  correctedPlaybackRate,
+  idealReferenceTime,
+  referenceSeekTime,
+  referenceSyncTarget,
+} from "./comparison";
+import type { ReferenceSwing, TimeAnchor } from "./comparison";
 import { computeAddressRefs } from "./geometry";
 import { referenceSwingVideoUrl } from "./libraryApi";
 import { createOverlayRenderState, renderOverlayFrame } from "./overlayRenderer";
 
 interface Props {
   reference: ReferenceSwing;
-  /** Reference frame aligned with the master video's current frame; null when the swings share no detected phases. */
-  targetFrameIndex: number | null;
+  /** Media-time pairs at phases detected on both swings; empty = can't align. */
+  timeAnchors: TimeAnchor[];
+  /** Master video's current media time — the per-frame sync input. */
+  masterTime: number;
+  playing: boolean;
+  masterVideoRef: RefObject<HTMLVideoElement | null>;
   hideVideo: boolean;
 }
 
 /**
- * The reference half of compare mode. Never plays on its own — the master
- * (user) video drives it by prop: each targetFrameIndex change seeks this
- * paused video to the phase-aligned moment and redraws its overlay. Seeks
- * are coalesced (at most one in flight, latest target wins) so a playing
- * master can't pile them up faster than the browser can decode.
+ * The reference half of compare mode, driven by the master (user) video in
+ * one of three modes. Master paused: this video is paused and seeked to the
+ * phase-aligned frame (seeks coalesced, latest target wins). Master playing
+ * inside the shared phase range: this video PLAYS — every frame decoded, no
+ * skipping — at a per-segment playbackRate that makes each phase span the
+ * same wall-clock time as the master's, with a gentle proportional rate
+ * nudge correcting drift (never a seek in steady state). Master playing
+ * outside the range: held frozen on the boundary anchor frame.
  */
-export function ReferenceVideo({ reference, targetFrameIndex, hideVideo }: Props) {
+export function ReferenceVideo({
+  reference,
+  timeAnchors,
+  masterTime,
+  playing,
+  masterVideoRef,
+  hideVideo,
+}: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererStateRef = useRef(createOverlayRenderState());
@@ -27,8 +48,11 @@ export function ReferenceVideo({ reference, targetFrameIndex, hideVideo }: Props
   const pendingIndexRef = useRef<number | null>(null);
   const lastSoughtIndexRef = useRef<number | null>(null);
   const readyRef = useRef(false);
-  const alignedRef = useRef(targetFrameIndex !== null);
-  alignedRef.current = targetFrameIndex !== null;
+  // Read by the frame-callback loop, which must see the latest values
+  // without re-subscribing per master frame.
+  const playModeRef = useRef<{ baseRate: number } | null>(null);
+  const anchorsRef = useRef<TimeAnchor[]>(timeAnchors);
+  anchorsRef.current = timeAnchors;
 
   const { analysis } = reference;
   const { fps, frame_count, frames, view, handedness, width, height } = analysis;
@@ -39,29 +63,35 @@ export function ReferenceVideo({ reference, targetFrameIndex, hideVideo }: Props
     [frames, handedness, aspect],
   );
 
-  const drawCurrent = useCallback(() => {
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    const ctx = canvas?.getContext("2d");
-    if (!video || !canvas || !ctx) return;
-    if (!alignedRef.current) {
-      ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
-      return;
-    }
-    const index = Math.min(frame_count - 1, Math.max(0, Math.round(video.currentTime * fps)));
-    renderOverlayFrame(
-      ctx,
-      canvas.clientWidth,
-      canvas.clientHeight,
-      index,
-      frames,
-      view,
-      handedness,
-      aspect,
-      addressRefs,
-      rendererStateRef.current,
-    );
-  }, [fps, frame_count, frames, view, handedness, aspect, addressRefs]);
+  const indexForTime = useCallback(
+    (t: number) => Math.min(frame_count - 1, Math.max(0, Math.round(t * fps))),
+    [fps, frame_count],
+  );
+
+  const drawAt = useCallback(
+    (mediaTime: number) => {
+      const canvas = canvasRef.current;
+      const ctx = canvas?.getContext("2d");
+      if (!canvas || !ctx) return;
+      if (anchorsRef.current.length === 0) {
+        ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
+        return;
+      }
+      renderOverlayFrame(
+        ctx,
+        canvas.clientWidth,
+        canvas.clientHeight,
+        indexForTime(mediaTime),
+        frames,
+        view,
+        handedness,
+        aspect,
+        addressRefs,
+        rendererStateRef.current,
+      );
+    },
+    [indexForTime, frames, view, handedness, aspect, addressRefs],
+  );
 
   const issueSeek = useCallback(
     (index: number) => {
@@ -72,8 +102,8 @@ export function ReferenceVideo({ reference, targetFrameIndex, hideVideo }: Props
       }
       if (index === lastSoughtIndexRef.current) return;
       if (seekingRef.current) {
-        // Latest target wins; intermediate frames are dropped rather than
-        // queued so seeks never pile up behind a slow decode.
+        // Latest target wins; a paused video only ever needs to land on the
+        // most recent frame, so intermediate targets are dropped.
         pendingIndexRef.current = index;
         return;
       }
@@ -84,10 +114,101 @@ export function ReferenceVideo({ reference, targetFrameIndex, hideVideo }: Props
     [analysis],
   );
 
+  // The seek dedupe cache is only meaningful within one paused/hold stretch;
+  // after playback has moved the video it would wrongly skip a realign seek.
+  const resetSeekState = useCallback(() => {
+    lastSoughtIndexRef.current = null;
+    pendingIndexRef.current = null;
+  }, []);
+
+  // Mode controller: reacts to every master time/play-state change.
   useEffect(() => {
-    if (targetFrameIndex !== null) issueSeek(targetFrameIndex);
-    else drawCurrent(); // clears the overlay in the can't-align state
-  }, [targetFrameIndex, issueSeek, drawCurrent]);
+    const video = videoRef.current;
+    if (!video) return;
+
+    if (timeAnchors.length === 0) {
+      playModeRef.current = null;
+      if (!video.paused) video.pause();
+      drawAt(video.currentTime); // clears the overlay in the can't-align state
+      return;
+    }
+
+    if (!playing) {
+      if (playModeRef.current) {
+        playModeRef.current = null;
+        resetSeekState();
+      }
+      if (!video.paused) video.pause();
+      issueSeek(indexForTime(idealReferenceTime(masterTime, timeAnchors)));
+      return;
+    }
+
+    const target = referenceSyncTarget(
+      masterTime,
+      timeAnchors,
+      masterVideoRef.current?.playbackRate ?? 1,
+    );
+    if (target.mode === "hold") {
+      if (playModeRef.current) {
+        playModeRef.current = null;
+        resetSeekState();
+      }
+      if (!video.paused) video.pause();
+      issueSeek(indexForTime(target.refTime));
+    } else {
+      // Keep baseRate fresh across segment/speed changes; the frame-callback
+      // loop applies it with drift correction.
+      playModeRef.current = { baseRate: target.baseRate };
+      if (video.paused) {
+        // Entering play mode: one alignment seek, then continuous playback.
+        resetSeekState();
+        issueSeek(indexForTime(target.refTime));
+        video.playbackRate = correctedPlaybackRate(target.baseRate, 0);
+        void video.play();
+      }
+    }
+  }, [
+    playing,
+    masterTime,
+    timeAnchors,
+    masterVideoRef,
+    drawAt,
+    indexForTime,
+    issueSeek,
+    resetSeekState,
+  ]);
+
+  // Frame-callback loop: draws the overlay for every presented reference
+  // frame and, while play-synced, steers playbackRate toward zero alignment
+  // error. Only a jump larger than the catch-up threshold (a master scrub)
+  // is allowed to seek.
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    let handle = 0;
+    let cancelled = false;
+    const onFrame: VideoFrameRequestCallback = (_now, metadata) => {
+      if (cancelled) return;
+      drawAt(metadata.mediaTime);
+      const playMode = playModeRef.current;
+      const master = masterVideoRef.current;
+      if (playMode && master && !video.paused) {
+        const ideal = idealReferenceTime(master.currentTime, anchorsRef.current);
+        const error = ideal - metadata.mediaTime;
+        if (Math.abs(error) > CATCHUP_SEEK_THRESHOLD) {
+          video.currentTime = referenceSeekTime(analysis, indexForTime(ideal));
+        } else {
+          video.playbackRate = correctedPlaybackRate(playMode.baseRate, error);
+        }
+      }
+      handle = video.requestVideoFrameCallback(onFrame);
+    };
+    handle = video.requestVideoFrameCallback(onFrame);
+    return () => {
+      cancelled = true;
+      video.cancelVideoFrameCallback(handle);
+    };
+  }, [drawAt, analysis, indexForTime, masterVideoRef]);
 
   // Canvas backing store tracks the video's displayed size at device pixel
   // ratio, same as the master video's overlay.
@@ -102,11 +223,11 @@ export function ReferenceVideo({ reference, targetFrameIndex, hideVideo }: Props
       canvas.height = Math.round(rect.height * dpr);
       const ctx = canvas.getContext("2d");
       if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      drawCurrent();
+      drawAt(video.currentTime);
     });
     observer.observe(video);
     return () => observer.disconnect();
-  }, [drawCurrent]);
+  }, [drawAt]);
 
   const flushPending = useCallback(() => {
     const next = pendingIndexRef.current;
@@ -128,20 +249,18 @@ export function ReferenceVideo({ reference, targetFrameIndex, hideVideo }: Props
           preload="auto"
           onLoadedMetadata={() => {
             readyRef.current = true;
-            if (pendingIndexRef.current === null && targetFrameIndex !== null) {
-              pendingIndexRef.current = targetFrameIndex;
-            }
             flushPending();
           }}
-          onSeeked={() => {
+          onSeeked={(e) => {
             seekingRef.current = false;
-            drawCurrent();
+            // Covers paused seeks; during playback the frame callback draws.
+            drawAt(e.currentTarget.currentTime);
             flushPending();
           }}
         />
         <canvas ref={canvasRef} className="overlay" />
       </div>
-      {targetFrameIndex === null && (
+      {timeAnchors.length === 0 && (
         <p className="video-slot-caption">
           Can't align these swings — no matching swing phases were detected.
         </p>

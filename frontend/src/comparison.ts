@@ -3,7 +3,7 @@ import { fetchReferenceAnalysis } from "./libraryApi.ts";
 import type { LibraryEntry } from "./libraryApi.ts";
 import { detectPhases } from "./phases.ts";
 import type { SwingPhases } from "./phases.ts";
-import type { AnalysisResponse, Handedness, View } from "./types.ts";
+import type { AnalysisResponse, Handedness, PoseFrame, View } from "./types.ts";
 
 export interface ReferenceSwing {
   entry: LibraryEntry;
@@ -61,12 +61,7 @@ export function mapUserFrameToReference(
   referencePhases: SwingPhases,
   referenceFrameCount: number,
 ): number | null {
-  const anchors = PHASE_ORDER.map((phase) => ({
-    user: userPhases[phase],
-    reference: referencePhases[phase],
-  })).filter(
-    (a): a is { user: number; reference: number } => a.user !== null && a.reference !== null,
-  );
+  const anchors = sharedPhaseAnchors(userPhases, referencePhases);
   if (anchors.length === 0) return null;
 
   const clamp = (index: number) => Math.min(referenceFrameCount - 1, Math.max(0, Math.round(index)));
@@ -83,4 +78,128 @@ export function mapUserFrameToReference(
     }
   }
   return null;
+}
+
+export interface AnchorPair {
+  user: number;
+  reference: number;
+}
+
+/**
+ * Phase checkpoints detected on both swings, in swing order — the anchor
+ * points every user↔reference time mapping interpolates between.
+ */
+export function sharedPhaseAnchors(
+  userPhases: SwingPhases,
+  referencePhases: SwingPhases,
+): AnchorPair[] {
+  return PHASE_ORDER.map((phase) => ({
+    user: userPhases[phase],
+    reference: referencePhases[phase],
+  })).filter((a): a is AnchorPair => a.user !== null && a.reference !== null);
+}
+
+export interface TimeAnchor {
+  userTime: number;
+  refTime: number;
+}
+
+/**
+ * Converts frame-index anchor pairs to media-time pairs via each swing's
+ * per-frame timestamps. Pairs whose user time fails to strictly increase are
+ * dropped so no downstream segment ever divides by a zero-width interval.
+ */
+export function anchorTimePairs(
+  anchors: AnchorPair[],
+  userFrames: PoseFrame[],
+  refFrames: PoseFrame[],
+): TimeAnchor[] {
+  const at = (frames: PoseFrame[], index: number) =>
+    frames[Math.min(frames.length - 1, Math.max(0, index))].t;
+  const result: TimeAnchor[] = [];
+  for (const anchor of anchors) {
+    const pair = { userTime: at(userFrames, anchor.user), refTime: at(refFrames, anchor.reference) };
+    const prev = result[result.length - 1];
+    if (prev && pair.userTime <= prev.userTime) continue;
+    result.push(pair);
+  }
+  return result;
+}
+
+/**
+ * Maps a user media time to the phase-aligned reference media time —
+ * piecewise-linear between anchors, clamped to the first/last anchor's
+ * reference time outside the shared range. Continuous (not frame-quantized)
+ * so it can drive a playback-rate control loop, not just seeks.
+ */
+export function idealReferenceTime(userTime: number, anchors: TimeAnchor[]): number {
+  if (userTime <= anchors[0].userTime) return anchors[0].refTime;
+  const last = anchors[anchors.length - 1];
+  if (userTime >= last.userTime) return last.refTime;
+  for (let i = 0; i < anchors.length - 1; i++) {
+    const a = anchors[i];
+    const b = anchors[i + 1];
+    if (userTime >= a.userTime && userTime <= b.userTime) {
+      const t = (userTime - a.userTime) / (b.userTime - a.userTime);
+      return a.refTime + t * (b.refTime - a.refTime);
+    }
+  }
+  return last.refTime;
+}
+
+export type SyncTarget =
+  | { mode: "hold"; refTime: number }
+  | { mode: "play"; refTime: number; baseRate: number };
+
+/**
+ * What the reference video should be doing while the master plays at
+ * masterRate: frozen on an anchor frame outside the shared phase range (or
+ * when there's only one anchor — nothing to interpolate), or playing at the
+ * rate that makes the current phase segment span the same wall-clock time as
+ * the master's. baseRate is unclamped; correctedPlaybackRate bounds it.
+ */
+export function referenceSyncTarget(
+  userTime: number,
+  anchors: TimeAnchor[],
+  masterRate: number,
+): SyncTarget {
+  const first = anchors[0];
+  const last = anchors[anchors.length - 1];
+  if (anchors.length < 2 || userTime <= first.userTime || userTime >= last.userTime) {
+    const refTime = userTime <= first.userTime ? first.refTime : last.refTime;
+    return { mode: "hold", refTime };
+  }
+  for (let i = 0; i < anchors.length - 1; i++) {
+    const a = anchors[i];
+    const b = anchors[i + 1];
+    if (userTime >= a.userTime && userTime <= b.userTime) {
+      const baseRate = ((b.refTime - a.refTime) / (b.userTime - a.userTime)) * masterRate;
+      return { mode: "play", refTime: idealReferenceTime(userTime, anchors), baseRate };
+    }
+  }
+  return { mode: "hold", refTime: last.refTime };
+}
+
+// Proportional drift controller for keeping the playing reference video on
+// its ideal phase-aligned time without ever seeking (a seek would skip
+// frames, which is exactly what rate-matched playback exists to avoid).
+const RATE_CORRECTION_GAIN = 2; // rate factor change per second of error
+const RATE_CORRECTION_SPAN = 0.15; // nudge capped at ±15% of the base rate
+export const MIN_PLAYBACK_RATE = 0.0625; // Chromium-supported bounds
+export const MAX_PLAYBACK_RATE = 16;
+/** Beyond this the master jumped (scrub) — realign with one seek instead. */
+export const CATCHUP_SEEK_THRESHOLD = 0.3;
+
+/**
+ * Playback rate that gently steers the reference toward zero alignment
+ * error. errorSeconds = ideal reference time − actual reference time
+ * (positive means the reference is behind and should speed up). At ±15% cap
+ * a ~150 ms error converges in about a second of 1x playback.
+ */
+export function correctedPlaybackRate(baseRate: number, errorSeconds: number): number {
+  const nudge = Math.min(
+    1 + RATE_CORRECTION_SPAN,
+    Math.max(1 - RATE_CORRECTION_SPAN, 1 + RATE_CORRECTION_GAIN * errorSeconds),
+  );
+  return Math.min(MAX_PLAYBACK_RATE, Math.max(MIN_PLAYBACK_RATE, baseRate * nudge));
 }

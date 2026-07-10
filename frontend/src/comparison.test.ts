@@ -1,10 +1,18 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  MAX_PLAYBACK_RATE,
+  MIN_PLAYBACK_RATE,
+  anchorTimePairs,
+  correctedPlaybackRate,
+  idealReferenceTime,
   loadReferenceSwing,
   mapUserFrameToReference,
   matchingReferenceEntries,
   referenceSeekTime,
+  referenceSyncTarget,
+  sharedPhaseAnchors,
 } from "./comparison";
+import type { TimeAnchor } from "./comparison";
 import { LEFT_WRIST, RIGHT_WRIST } from "./geometry";
 import type { LibraryEntry } from "./libraryApi";
 import type { SwingPhases } from "./phases";
@@ -95,6 +103,166 @@ describe("referenceSeekTime", () => {
     for (const index of [0, 1, 29, 59]) {
       expect(Math.round(referenceSeekTime(analysis, index) * FPS)).toBe(index);
     }
+  });
+});
+
+describe("sharedPhaseAnchors", () => {
+  const userPhases: SwingPhases = {
+    address: 0,
+    takeaway: 10,
+    top: 40,
+    downswing: null,
+    impact: 60,
+    followThrough: null,
+  };
+  const referencePhases: SwingPhases = {
+    address: 10,
+    takeaway: null,
+    top: 30,
+    downswing: 35,
+    impact: 40,
+    followThrough: null,
+  };
+
+  it("keeps only phases detected on both sides, in swing order", () => {
+    expect(sharedPhaseAnchors(userPhases, referencePhases)).toEqual([
+      { user: 0, reference: 10 },
+      { user: 40, reference: 30 },
+      { user: 60, reference: 40 },
+    ]);
+  });
+
+  it("returns empty when nothing is shared", () => {
+    const none: SwingPhases = {
+      address: null,
+      takeaway: null,
+      top: null,
+      downswing: null,
+      impact: null,
+      followThrough: null,
+    };
+    expect(sharedPhaseAnchors(none, referencePhases)).toEqual([]);
+  });
+});
+
+describe("anchorTimePairs", () => {
+  const userFrames = frames(Array.from({ length: 100 }, () => 0.5));
+  const refFrames = frames(Array.from({ length: 50 }, () => 0.5));
+
+  it("converts frame indices to per-frame timestamps", () => {
+    const pairs = anchorTimePairs(
+      [
+        { user: 0, reference: 10 },
+        { user: 60, reference: 40 },
+      ],
+      userFrames,
+      refFrames,
+    );
+    expect(pairs).toEqual([
+      { userTime: 0, refTime: 10 / FPS },
+      { userTime: 60 / FPS, refTime: 40 / FPS },
+    ]);
+  });
+
+  it("clamps out-of-bounds indices to the frame range", () => {
+    const pairs = anchorTimePairs([{ user: -5, reference: 500 }], userFrames, refFrames);
+    expect(pairs).toEqual([{ userTime: 0, refTime: 49 / FPS }]);
+  });
+
+  it("drops pairs whose user time does not strictly increase", () => {
+    const pairs = anchorTimePairs(
+      [
+        { user: 10, reference: 5 },
+        { user: 10, reference: 8 },
+        { user: 20, reference: 12 },
+      ],
+      userFrames,
+      refFrames,
+    );
+    expect(pairs).toEqual([
+      { userTime: 10 / FPS, refTime: 5 / FPS },
+      { userTime: 20 / FPS, refTime: 12 / FPS },
+    ]);
+  });
+});
+
+describe("idealReferenceTime", () => {
+  const anchors: TimeAnchor[] = [
+    { userTime: 0, refTime: 1 },
+    { userTime: 4, refTime: 3 },
+    { userTime: 6, refTime: 4 },
+  ];
+
+  it("interpolates linearly inside a segment", () => {
+    expect(idealReferenceTime(2, anchors)).toBeCloseTo(2);
+    expect(idealReferenceTime(5, anchors)).toBeCloseTo(3.5);
+  });
+
+  it("lands exactly on anchors", () => {
+    expect(idealReferenceTime(4, anchors)).toBe(3);
+  });
+
+  it("clamps outside the shared range", () => {
+    expect(idealReferenceTime(-1, anchors)).toBe(1);
+    expect(idealReferenceTime(100, anchors)).toBe(4);
+  });
+});
+
+describe("referenceSyncTarget", () => {
+  const anchors: TimeAnchor[] = [
+    { userTime: 1, refTime: 2 },
+    { userTime: 3, refTime: 3 },
+    { userTime: 5, refTime: 7 },
+  ];
+
+  it("holds on the boundary anchors outside the shared range", () => {
+    expect(referenceSyncTarget(0.5, anchors, 1)).toEqual({ mode: "hold", refTime: 2 });
+    expect(referenceSyncTarget(9, anchors, 1)).toEqual({ mode: "hold", refTime: 7 });
+  });
+
+  it("holds when there is only one anchor", () => {
+    expect(referenceSyncTarget(2, [{ userTime: 1, refTime: 2 }], 1)).toEqual({
+      mode: "hold",
+      refTime: 2,
+    });
+  });
+
+  it("scales the segment rate by the master playback rate", () => {
+    // Segment 1→3s user maps to 2→3s ref: ratio 0.5; at master 0.5x → 0.25.
+    const target = referenceSyncTarget(2, anchors, 0.5);
+    expect(target.mode).toBe("play");
+    if (target.mode === "play") {
+      expect(target.baseRate).toBeCloseTo(0.25);
+      expect(target.refTime).toBeCloseTo(2.5);
+    }
+  });
+
+  it("uses each segment's own tempo ratio", () => {
+    // Segment 3→5s user maps to 3→7s ref: ratio 2 at master 1x.
+    const target = referenceSyncTarget(4, anchors, 1);
+    expect(target.mode).toBe("play");
+    if (target.mode === "play") expect(target.baseRate).toBeCloseTo(2);
+  });
+});
+
+describe("correctedPlaybackRate", () => {
+  it("returns the base rate at zero error", () => {
+    expect(correctedPlaybackRate(1.5, 0)).toBeCloseTo(1.5);
+  });
+
+  it("speeds up when behind and slows down when ahead", () => {
+    expect(correctedPlaybackRate(1, 0.05)).toBeCloseTo(1.1);
+    expect(correctedPlaybackRate(1, -0.05)).toBeCloseTo(0.9);
+  });
+
+  it("caps the nudge at ±15% of the base rate", () => {
+    expect(correctedPlaybackRate(1, 10)).toBeCloseTo(1.15);
+    expect(correctedPlaybackRate(1, -10)).toBeCloseTo(0.85);
+  });
+
+  it("clamps to the browser-supported rate range", () => {
+    expect(correctedPlaybackRate(0.05, 0)).toBe(MIN_PLAYBACK_RATE);
+    expect(correctedPlaybackRate(20, 0)).toBe(MAX_PLAYBACK_RATE);
   });
 });
 

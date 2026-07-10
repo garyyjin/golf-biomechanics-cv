@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BenchmarkTable } from "./benchmarks";
-import { loadReferenceSwing, mapUserFrameToReference, matchingReferenceEntries } from "./comparison";
+import {
+  anchorTimePairs,
+  loadReferenceSwing,
+  matchingReferenceEntries,
+  sharedPhaseAnchors,
+} from "./comparison";
 import type { ReferenceSwing } from "./comparison";
 import { LINE_COLORS } from "./draw";
 import { FeedbackPanel } from "./FeedbackPanel";
@@ -235,21 +240,21 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
 
   const currentIndex = frameIndexAt(time);
 
-  // Frame in the reference swing showing the "same moment" as the user's
-  // current frame — the sync input for the side-by-side compare video.
-  // setTime fires from the frame-callback loop, onTimeUpdate, and onSeeked,
-  // so playback, scrubbing, stepping, and phase-chip seeks all flow through.
-  const referenceFrameIndex = useMemo(
+  // Media-time anchor pairs at the phases detected on both swings — the
+  // alignment map for the side-by-side compare video. The per-frame sync
+  // input is the `time` state itself: it fires from the frame-callback loop,
+  // onTimeUpdate, and onSeeked, so playback, scrubbing, stepping, and
+  // phase-chip seeks all flow through.
+  const timeAnchors = useMemo(
     () =>
       reference
-        ? mapUserFrameToReference(
-            currentIndex,
-            feedback.phases,
-            reference.phases,
-            reference.analysis.frame_count,
+        ? anchorTimePairs(
+            sharedPhaseAnchors(feedback.phases, reference.phases),
+            frames,
+            reference.analysis.frames,
           )
-        : null,
-    [reference, currentIndex, feedback.phases],
+        : [],
+    [reference, feedback.phases, frames],
   );
 
   const comparing = compareMode && referenceStatus !== "unavailable";
@@ -278,6 +283,7 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
                   playsInline
                   onPlay={() => setPlaying(true)}
                   onPause={() => setPlaying(false)}
+                  onEnded={() => setPlaying(false)}
                   onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
                   onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}
                   onSeeked={(e) => {
@@ -321,7 +327,10 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
                   <ReferenceVideo
                     key={reference.entry.id}
                     reference={reference}
-                    targetFrameIndex={referenceFrameIndex}
+                    timeAnchors={timeAnchors}
+                    masterTime={time}
+                    playing={playing}
+                    masterVideoRef={videoRef}
                     hideVideo={hideVideo}
                   />
                 ) : (
