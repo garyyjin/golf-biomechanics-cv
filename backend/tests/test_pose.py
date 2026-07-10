@@ -71,6 +71,14 @@ def test_analyze_video_reports_progress(sample_video):
     assert all(c[1] == calls[0][1] for c in calls)
 
 
+def test_analyze_video_includes_club_tip_yolo_key(sample_video):
+    result = analyze_video(str(sample_video))
+    # No backend/app/models/clubhead.pt yet (see app/club.py), so this is
+    # always None regardless of frame content — confirms the key exists.
+    assert all("club_tip_yolo" in f for f in result["frames"])
+    assert all(f["club_tip_yolo"] is None for f in result["frames"])
+
+
 def test_detect_club_tip_finds_a_drawn_line_from_the_hands():
     width = height = 200
     frame = np.full((height, width, 3), 255, dtype=np.uint8)
