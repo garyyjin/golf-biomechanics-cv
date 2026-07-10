@@ -19,6 +19,12 @@ export interface PoseFrame {
   // estimate (geometry.ts's clubTipEstimate) in that case. Optional so
   // test fixtures that predate this field don't all need updating.
   club_tip?: { x: number; y: number } | null;
+  // Normalized [0,1] point from a separate, still-experimental per-frame
+  // YOLOv8n clubhead detector (see backend/app/club.py) — additive data for
+  // evaluating against club_tip, not a replacement for it yet. Always
+  // null/absent until backend/app/models/clubhead.pt exists (no trained
+  // weights yet). Optional for the same reason as club_tip.
+  club_tip_yolo?: { x: number; y: number } | null;
 }
 
 export interface AnalysisResponse {

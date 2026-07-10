@@ -40,6 +40,8 @@ def test_analyze_ok(sample_video):
         if landmarks is not None:
             for lm in landmarks:
                 assert set(lm) == {"x", "y", "z", "visibility"}
+        club_tip_yolo = frame["club_tip_yolo"]
+        assert club_tip_yolo is None or set(club_tip_yolo) == {"x", "y"}
 
 
 def test_missing_view_422(sample_video):
@@ -85,6 +87,8 @@ def test_analyze_accurate_quality_ok(sample_video):
     for frame in body["frames"]:
         landmarks = frame["landmarks"]
         assert landmarks is None or len(landmarks) == 33
+        club_tip_yolo = frame["club_tip_yolo"]
+        assert club_tip_yolo is None or set(club_tip_yolo) == {"x", "y"}
 
 
 def test_bad_extension_422(tmp_path):

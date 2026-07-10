@@ -2,7 +2,8 @@ fastapi==0.139.0
 uvicorn==0.50.2
 python-multipart==0.0.32
 mediapipe==0.10.21
-opencv-contrib-python==4.11.0.86
+opencv-python==4.11.0.86
 numpy==1.26.4
+ultralytics==8.3.203
 pytest==8.4.1
 httpx==0.28.1
