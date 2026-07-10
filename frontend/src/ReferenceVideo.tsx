@@ -3,22 +3,24 @@ import type { RefObject } from "react";
 import {
   CATCHUP_SEEK_THRESHOLD,
   correctedPlaybackRate,
-  idealReferenceTime,
+  idealTimeForPlan,
   referenceSeekTime,
-  referenceSyncTarget,
+  syncTargetForPlan,
 } from "./comparison";
-import type { ReferenceSwing, TimeAnchor } from "./comparison";
+import type { ReferenceSwing, SyncPlan } from "./comparison";
 import { computeAddressRefs } from "./geometry";
 import { referenceSwingVideoUrl } from "./libraryApi";
 import { createOverlayRenderState, renderOverlayFrame } from "./overlayRenderer";
 
 interface Props {
   reference: ReferenceSwing;
-  /** Media-time pairs at phases detected on both swings; empty = can't align. */
-  timeAnchors: TimeAnchor[];
+  /** How to follow the master: phase-stretched or natural tempo. A phase plan with no anchors = can't align. */
+  plan: SyncPlan;
   /** Master video's current media time — the per-frame sync input. */
   masterTime: number;
   playing: boolean;
+  /** True when the master stopped by finishing its course — file end, or swing end in regular-speed mode — not a user pause. */
+  masterDone: boolean;
   masterVideoRef: RefObject<HTMLVideoElement | null>;
   hideVideo: boolean;
 }
@@ -35,9 +37,10 @@ interface Props {
  */
 export function ReferenceVideo({
   reference,
-  timeAnchors,
+  plan,
   masterTime,
   playing,
+  masterDone,
   masterVideoRef,
   hideVideo,
 }: Props) {
@@ -51,8 +54,10 @@ export function ReferenceVideo({
   // Read by the frame-callback loop, which must see the latest values
   // without re-subscribing per master frame.
   const playModeRef = useRef<{ baseRate: number } | null>(null);
-  const anchorsRef = useRef<TimeAnchor[]>(timeAnchors);
-  anchorsRef.current = timeAnchors;
+  const planRef = useRef<SyncPlan>(plan);
+  planRef.current = plan;
+
+  const cannotAlign = plan.kind === "phase" && plan.anchors.length === 0;
 
   const { analysis } = reference;
   const { fps, frame_count, frames, view, handedness, width, height } = analysis;
@@ -73,7 +78,8 @@ export function ReferenceVideo({
       const canvas = canvasRef.current;
       const ctx = canvas?.getContext("2d");
       if (!canvas || !ctx) return;
-      if (anchorsRef.current.length === 0) {
+      const p = planRef.current;
+      if (p.kind === "phase" && p.anchors.length === 0) {
         ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
         return;
       }
@@ -126,7 +132,7 @@ export function ReferenceVideo({
     const video = videoRef.current;
     if (!video) return;
 
-    if (timeAnchors.length === 0) {
+    if (cannotAlign) {
       playModeRef.current = null;
       if (!video.paused) video.pause();
       drawAt(video.currentTime); // clears the overlay in the can't-align state
@@ -134,18 +140,31 @@ export function ReferenceVideo({
     }
 
     if (!playing) {
+      // Regular-speed comparison: the master finishing its swing doesn't
+      // stop a still-swinging reference — each pauses at its own swing end,
+      // so let it run out (the frame-callback loop stops it at refEndTime).
+      if (
+        plan.kind === "natural" &&
+        masterDone &&
+        !video.paused &&
+        video.currentTime < plan.refEndTime - 0.01
+      ) {
+        playModeRef.current = null; // master time is frozen; steering against it would drag the rate down
+        video.playbackRate = masterVideoRef.current?.playbackRate ?? 1;
+        return;
+      }
       if (playModeRef.current) {
         playModeRef.current = null;
         resetSeekState();
       }
       if (!video.paused) video.pause();
-      issueSeek(indexForTime(idealReferenceTime(masterTime, timeAnchors)));
+      issueSeek(indexForTime(idealTimeForPlan(masterTime, plan)));
       return;
     }
 
-    const target = referenceSyncTarget(
+    const target = syncTargetForPlan(
       masterTime,
-      timeAnchors,
+      plan,
       masterVideoRef.current?.playbackRate ?? 1,
     );
     if (target.mode === "hold") {
@@ -170,7 +189,9 @@ export function ReferenceVideo({
   }, [
     playing,
     masterTime,
-    timeAnchors,
+    plan,
+    masterDone,
+    cannotAlign,
     masterVideoRef,
     drawAt,
     indexForTime,
@@ -190,10 +211,20 @@ export function ReferenceVideo({
     const onFrame: VideoFrameRequestCallback = (_now, metadata) => {
       if (cancelled) return;
       drawAt(metadata.mediaTime);
+      // Regular-speed comparison ends at the reference's own swing end. This
+      // lives here rather than in the mode controller because in the
+      // let-it-run state (master already done) the master's clock is frozen
+      // and no controller ticks arrive.
+      const p = planRef.current;
+      if (p.kind === "natural" && metadata.mediaTime >= p.refEndTime && !video.paused) {
+        video.pause();
+        handle = video.requestVideoFrameCallback(onFrame);
+        return;
+      }
       const playMode = playModeRef.current;
       const master = masterVideoRef.current;
       if (playMode && master && !video.paused) {
-        const ideal = idealReferenceTime(master.currentTime, anchorsRef.current);
+        const ideal = idealTimeForPlan(master.currentTime, planRef.current);
         const error = ideal - metadata.mediaTime;
         if (Math.abs(error) > CATCHUP_SEEK_THRESHOLD) {
           video.currentTime = referenceSeekTime(analysis, indexForTime(ideal));
@@ -260,7 +291,7 @@ export function ReferenceVideo({
         />
         <canvas ref={canvasRef} className="overlay" />
       </div>
-      {timeAnchors.length === 0 && (
+      {cannotAlign && (
         <p className="video-slot-caption">
           Can't align these swings — no matching swing phases were detected.
         </p>

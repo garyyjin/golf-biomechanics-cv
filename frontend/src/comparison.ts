@@ -180,6 +180,96 @@ export function referenceSyncTarget(
   return { mode: "hold", refTime: last.refTime };
 }
 
+/**
+ * How the reference video follows the master. "phase" stretches each swing
+ * segment so the phases line up; "natural" plays the reference at its own
+ * tempo, time-shifted so the two takeaways coincide and windowed to the
+ * swing itself: refTime = clamp(masterTime + offset, refStartTime,
+ * refEndTime).
+ */
+export type SyncPlan =
+  | { kind: "phase"; anchors: TimeAnchor[] }
+  | { kind: "natural"; offset: number; refStartTime: number; refEndTime: number };
+
+export const NATURAL_LEAD_IN = 0.5; // seconds of run-up shown before takeaway
+export const NATURAL_TAIL = 0.5; // seconds shown past follow-through
+
+export interface NaturalSync {
+  /** Where Play rewinds the master to (just before its takeaway). */
+  masterStartTime: number;
+  /** Where the master pauses — its swing end, not the file end. */
+  masterEndTime: number;
+  plan: Extract<SyncPlan, { kind: "natural" }>;
+}
+
+/**
+ * Builds the regular-speed comparison setup: both videos play at natural
+ * tempo, offset so their takeaways happen at the same moment, and each stops
+ * just past its own follow-through. Undetected phases fall back along the
+ * swing (takeaway → address → first frame; follow-through → impact → last
+ * frame), degrading toward whole-video playback rather than failing.
+ */
+export function buildNaturalSync(
+  userPhases: SwingPhases,
+  refPhases: SwingPhases,
+  userFrames: PoseFrame[],
+  refFrames: PoseFrame[],
+): NaturalSync {
+  const timeOf = (frames: PoseFrame[], index: number) =>
+    frames[Math.min(frames.length - 1, Math.max(0, index))].t;
+  const lastT = (frames: PoseFrame[]) => frames[frames.length - 1].t;
+
+  const userTakeaway = timeOf(userFrames, userPhases.takeaway ?? userPhases.address ?? 0);
+  const refTakeaway = timeOf(refFrames, refPhases.takeaway ?? refPhases.address ?? 0);
+  const userSwingEnd = timeOf(
+    userFrames,
+    userPhases.followThrough ?? userPhases.impact ?? userFrames.length - 1,
+  );
+  const refSwingEnd = timeOf(
+    refFrames,
+    refPhases.followThrough ?? refPhases.impact ?? refFrames.length - 1,
+  );
+
+  return {
+    masterStartTime: Math.max(0, userTakeaway - NATURAL_LEAD_IN),
+    masterEndTime: Math.min(lastT(userFrames), userSwingEnd + NATURAL_TAIL),
+    plan: {
+      kind: "natural",
+      offset: refTakeaway - userTakeaway,
+      refStartTime: Math.max(0, refTakeaway - NATURAL_LEAD_IN),
+      refEndTime: Math.min(lastT(refFrames), refSwingEnd + NATURAL_TAIL),
+    },
+  };
+}
+
+/** Ideal reference media time for a master media time under the given plan. */
+export function idealTimeForPlan(masterTime: number, plan: SyncPlan): number {
+  if (plan.kind === "natural") {
+    return Math.min(Math.max(masterTime + plan.offset, plan.refStartTime), plan.refEndTime);
+  }
+  return idealReferenceTime(masterTime, plan.anchors);
+}
+
+/**
+ * Sync target under the given plan. Phase plans assume non-empty anchors
+ * (callers guard the can't-align case); natural plans always resolve —
+ * hold on the window edge outside the reference's swing, play at the
+ * master's own rate inside it.
+ */
+export function syncTargetForPlan(
+  masterTime: number,
+  plan: SyncPlan,
+  masterRate: number,
+): SyncTarget {
+  if (plan.kind === "natural") {
+    const mapped = masterTime + plan.offset;
+    if (mapped >= plan.refEndTime) return { mode: "hold", refTime: plan.refEndTime };
+    if (mapped <= plan.refStartTime) return { mode: "hold", refTime: plan.refStartTime };
+    return { mode: "play", refTime: mapped, baseRate: masterRate };
+  }
+  return referenceSyncTarget(masterTime, plan.anchors, masterRate);
+}
+
 // Proportional drift controller for keeping the playing reference video on
 // its ideal phase-aligned time without ever seeking (a seek would skip
 // frames, which is exactly what rate-matched playback exists to avoid).

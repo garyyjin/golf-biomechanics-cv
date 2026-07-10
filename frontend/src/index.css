@@ -316,6 +316,19 @@ button:disabled {
   color: var(--color-mid-gray);
 }
 
+.video-slot-tools {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.video-slot-tools .toggle {
+  padding: 4px 10px;
+  font-size: 0.8rem;
+  flex: none;
+}
+
 .reference-picker {
   min-width: 0;
   max-width: 100%;

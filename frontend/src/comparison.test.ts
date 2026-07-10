@@ -2,17 +2,22 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   MAX_PLAYBACK_RATE,
   MIN_PLAYBACK_RATE,
+  NATURAL_LEAD_IN,
+  NATURAL_TAIL,
   anchorTimePairs,
+  buildNaturalSync,
   correctedPlaybackRate,
   idealReferenceTime,
+  idealTimeForPlan,
   loadReferenceSwing,
   mapUserFrameToReference,
   matchingReferenceEntries,
   referenceSeekTime,
   referenceSyncTarget,
   sharedPhaseAnchors,
+  syncTargetForPlan,
 } from "./comparison";
-import type { TimeAnchor } from "./comparison";
+import type { SyncPlan, TimeAnchor } from "./comparison";
 import { LEFT_WRIST, RIGHT_WRIST } from "./geometry";
 import type { LibraryEntry } from "./libraryApi";
 import type { SwingPhases } from "./phases";
@@ -242,6 +247,104 @@ describe("referenceSyncTarget", () => {
     const target = referenceSyncTarget(4, anchors, 1);
     expect(target.mode).toBe("play");
     if (target.mode === "play") expect(target.baseRate).toBeCloseTo(2);
+  });
+});
+
+describe("sync plans", () => {
+  const anchors: TimeAnchor[] = [
+    { userTime: 1, refTime: 2 },
+    { userTime: 3, refTime: 3 },
+  ];
+  const phasePlan: SyncPlan = { kind: "phase", anchors };
+  // Reference takeaway is 0.5s later than the user's; swing window [1, 5].
+  const naturalPlan: SyncPlan = { kind: "natural", offset: 0.5, refStartTime: 1, refEndTime: 5 };
+
+  it("natural plan shifts elapsed time by the takeaway offset, clamped to the swing window", () => {
+    expect(idealTimeForPlan(2.5, naturalPlan)).toBe(3);
+    expect(idealTimeForPlan(0, naturalPlan)).toBe(1);
+    expect(idealTimeForPlan(9, naturalPlan)).toBe(5);
+  });
+
+  it("phase plan delegates to the anchor interpolation", () => {
+    expect(idealTimeForPlan(2, phasePlan)).toBeCloseTo(2.5);
+  });
+
+  it("natural plan plays at the master rate inside the reference's swing window", () => {
+    expect(syncTargetForPlan(2.5, naturalPlan, 0.5)).toEqual({
+      mode: "play",
+      refTime: 3,
+      baseRate: 0.5,
+    });
+    expect(syncTargetForPlan(0.2, naturalPlan, 1)).toEqual({ mode: "hold", refTime: 1 });
+    expect(syncTargetForPlan(6, naturalPlan, 1)).toEqual({ mode: "hold", refTime: 5 });
+  });
+
+  it("phase plan delegates to the segment-rate targeting", () => {
+    expect(syncTargetForPlan(0.5, phasePlan, 1)).toEqual({ mode: "hold", refTime: 2 });
+    const target = syncTargetForPlan(2, phasePlan, 1);
+    expect(target.mode).toBe("play");
+    if (target.mode === "play") expect(target.baseRate).toBeCloseTo(0.5);
+  });
+});
+
+describe("buildNaturalSync", () => {
+  const userFrames = frames(Array.from({ length: 120 }, () => 0.5));
+  const refFrames = frames(Array.from({ length: 90 }, () => 0.5));
+  const phases = (overrides: Partial<SwingPhases>): SwingPhases => ({
+    address: null,
+    takeaway: null,
+    top: null,
+    downswing: null,
+    impact: null,
+    followThrough: null,
+    ...overrides,
+  });
+
+  it("offsets so the takeaways coincide and windows each swing", () => {
+    const sync = buildNaturalSync(
+      phases({ takeaway: 60, followThrough: 90 }), // t = 2s, 3s
+      phases({ takeaway: 30, followThrough: 60 }), // t = 1s, 2s
+      userFrames,
+      refFrames,
+    );
+    expect(sync.masterStartTime).toBeCloseTo(2 - NATURAL_LEAD_IN);
+    expect(sync.masterEndTime).toBeCloseTo(3 + NATURAL_TAIL);
+    expect(sync.plan.offset).toBeCloseTo(-1);
+    expect(sync.plan.refStartTime).toBeCloseTo(1 - NATURAL_LEAD_IN);
+    expect(sync.plan.refEndTime).toBeCloseTo(2 + NATURAL_TAIL);
+  });
+
+  it("clamps the lead-in at the start of the footage", () => {
+    const sync = buildNaturalSync(
+      phases({ takeaway: 60, followThrough: 90 }),
+      phases({ takeaway: 5, followThrough: 60 }), // t ≈ 0.167s — less than the lead-in
+      userFrames,
+      refFrames,
+    );
+    expect(sync.plan.refStartTime).toBe(0);
+  });
+
+  it("clamps the tail at the end of the footage", () => {
+    const sync = buildNaturalSync(
+      phases({ takeaway: 60, followThrough: 119 }), // last user frame
+      phases({ takeaway: 30, followThrough: 60 }),
+      userFrames,
+      refFrames,
+    );
+    expect(sync.masterEndTime).toBeCloseTo(119 / FPS);
+  });
+
+  it("falls back along the swing when phases are undetected", () => {
+    const sync = buildNaturalSync(
+      phases({ address: 30, impact: 75 }), // no takeaway/followThrough
+      phases({}), // nothing detected at all
+      userFrames,
+      refFrames,
+    );
+    expect(sync.masterStartTime).toBeCloseTo(1 - NATURAL_LEAD_IN); // address at t = 1s
+    expect(sync.masterEndTime).toBeCloseTo(75 / FPS + NATURAL_TAIL); // impact + tail
+    expect(sync.plan.refStartTime).toBe(0); // frame 0 fallback
+    expect(sync.plan.refEndTime).toBeCloseTo(89 / FPS); // last-frame fallback
   });
 });
 

@@ -2,11 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BenchmarkTable } from "./benchmarks";
 import {
   anchorTimePairs,
+  buildNaturalSync,
   loadReferenceSwing,
   matchingReferenceEntries,
   sharedPhaseAnchors,
 } from "./comparison";
-import type { ReferenceSwing } from "./comparison";
+import type { ReferenceSwing, SyncPlan } from "./comparison";
 import { LINE_COLORS } from "./draw";
 import { FeedbackPanel } from "./FeedbackPanel";
 import type { ReferenceStatus } from "./FeedbackPanel";
@@ -46,6 +47,8 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
   const [referenceEntries, setReferenceEntries] = useState<LibraryEntry[]>([]);
   const [selectedReferenceId, setSelectedReferenceId] = useState<string | null>(null);
   const [compareMode, setCompareMode] = useState(false);
+  const [naturalSpeed, setNaturalSpeed] = useState(false);
+  const [masterEnded, setMasterEnded] = useState(false);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -188,6 +191,50 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
     return () => observer.disconnect();
   }, [drawAt]);
 
+  // Media-time anchor pairs at the phases detected on both swings — the
+  // alignment map for the side-by-side compare video. The per-frame sync
+  // input is the `time` state itself: it fires from the frame-callback loop,
+  // onTimeUpdate, and onSeeked, so playback, scrubbing, stepping, and
+  // phase-chip seeks all flow through.
+  const timeAnchors = useMemo(
+    () =>
+      reference
+        ? anchorTimePairs(
+            sharedPhaseAnchors(feedback.phases, reference.phases),
+            frames,
+            reference.analysis.frames,
+          )
+        : [],
+    [reference, feedback.phases, frames],
+  );
+
+  const naturalSync = useMemo(
+    () =>
+      naturalSpeed && reference
+        ? buildNaturalSync(feedback.phases, reference.phases, frames, reference.analysis.frames)
+        : null,
+    [naturalSpeed, reference, feedback.phases, frames],
+  );
+
+  const syncPlan: SyncPlan = useMemo(
+    () => (naturalSync ? naturalSync.plan : { kind: "phase", anchors: timeAnchors }),
+    [naturalSync, timeAnchors],
+  );
+
+  // Regular-speed comparison plays the swing, not the whole clip: the master
+  // pauses at its own swing end (the reference finishes independently).
+  useEffect(() => {
+    if (playing && naturalSync && time >= naturalSync.masterEndTime) {
+      videoRef.current?.pause();
+    }
+  }, [playing, time, naturalSync]);
+
+  // "The master stopped because it finished its course" — file end, or swing
+  // end in regular-speed mode — as opposed to a user pause. Derived from
+  // `time`, so scrubbing back clears it.
+  const masterDone =
+    masterEnded || (naturalSync !== null && time >= naturalSync.masterEndTime - 1e-3);
+
   const seekTo = useCallback(
     (t: number) => {
       const video = videoRef.current;
@@ -217,9 +264,16 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
   const togglePlay = useCallback(() => {
     const video = videoRef.current;
     if (!video) return;
-    if (video.paused) void video.play();
-    else video.pause();
-  }, []);
+    if (video.paused) {
+      // Regular-speed comparison replays both swings from just before their
+      // takeaways so the swings start at the same moment (the reference
+      // restarts via its sync plan).
+      if (compareMode && naturalSync) video.currentTime = naturalSync.masterStartTime;
+      void video.play();
+    } else {
+      video.pause();
+    }
+  }, [compareMode, naturalSync]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -239,23 +293,6 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
   }, [togglePlay, stepFrame]);
 
   const currentIndex = frameIndexAt(time);
-
-  // Media-time anchor pairs at the phases detected on both swings — the
-  // alignment map for the side-by-side compare video. The per-frame sync
-  // input is the `time` state itself: it fires from the frame-callback loop,
-  // onTimeUpdate, and onSeeked, so playback, scrubbing, stepping, and
-  // phase-chip seeks all flow through.
-  const timeAnchors = useMemo(
-    () =>
-      reference
-        ? anchorTimePairs(
-            sharedPhaseAnchors(feedback.phases, reference.phases),
-            frames,
-            reference.analysis.frames,
-          )
-        : [],
-    [reference, feedback.phases, frames],
-  );
 
   const comparing = compareMode && referenceStatus !== "unavailable";
 
@@ -281,9 +318,15 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
                   ref={videoRef}
                   src={videoUrl}
                   playsInline
-                  onPlay={() => setPlaying(true)}
+                  onPlay={() => {
+                    setPlaying(true);
+                    setMasterEnded(false);
+                  }}
                   onPause={() => setPlaying(false)}
-                  onEnded={() => setPlaying(false)}
+                  onEnded={() => {
+                    setPlaying(false);
+                    setMasterEnded(true);
+                  }}
                   onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
                   onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}
                   onSeeked={(e) => {
@@ -291,6 +334,7 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
                     // callback for them.
                     drawAt(e.currentTarget.currentTime);
                     setTime(e.currentTarget.currentTime);
+                    setMasterEnded(e.currentTarget.ended);
                   }}
                 />
                 <canvas ref={canvasRef} className="overlay" />
@@ -310,26 +354,38 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
               >
                 <div className="video-slot-header">
                   <span className="video-slot-label">Reference</span>
-                  <select
-                    className="reference-picker"
-                    aria-label="Reference swing"
-                    value={selectedReferenceId ?? ""}
-                    onChange={(e) => setSelectedReferenceId(e.target.value)}
-                  >
-                    {referenceEntries.map((entry) => (
-                      <option key={entry.id} value={entry.id}>
-                        {entry.filename} · {new Date(entry.createdAt).toLocaleDateString()}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="video-slot-tools">
+                    <button
+                      type="button"
+                      className={naturalSpeed ? "toggle selected" : "toggle"}
+                      aria-pressed={naturalSpeed}
+                      title="Play the reference at its own tempo, started together with your swing, instead of stretching it to match your phases"
+                      onClick={() => setNaturalSpeed((v) => !v)}
+                    >
+                      Regular speed
+                    </button>
+                    <select
+                      className="reference-picker"
+                      aria-label="Reference swing"
+                      value={selectedReferenceId ?? ""}
+                      onChange={(e) => setSelectedReferenceId(e.target.value)}
+                    >
+                      {referenceEntries.map((entry) => (
+                        <option key={entry.id} value={entry.id}>
+                          {entry.filename} · {new Date(entry.createdAt).toLocaleDateString()}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
                 {reference && referenceStatus === "loaded" ? (
                   <ReferenceVideo
                     key={reference.entry.id}
                     reference={reference}
-                    timeAnchors={timeAnchors}
+                    plan={syncPlan}
                     masterTime={time}
                     playing={playing}
+                    masterDone={masterDone}
                     masterVideoRef={videoRef}
                     hideVideo={hideVideo}
                   />
