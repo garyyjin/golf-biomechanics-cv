@@ -61,6 +61,16 @@ def test_analyze_video_includes_club_tip_key(sample_video):
     assert all(f["club_tip"] is None for f in result["frames"])
 
 
+def test_analyze_video_reports_progress(sample_video):
+    calls = []
+    analyze_video(str(sample_video), on_progress=lambda index, total: calls.append((index, total)))
+    # sample_video has 10 frames; on_progress should fire once per frame,
+    # with a strictly increasing index and a consistent total.
+    assert len(calls) == 10
+    assert [c[0] for c in calls] == list(range(1, 11))
+    assert all(c[1] == calls[0][1] for c in calls)
+
+
 def test_detect_club_tip_finds_a_drawn_line_from_the_hands():
     width = height = 200
     frame = np.full((height, width, 3), 255, dtype=np.uint8)

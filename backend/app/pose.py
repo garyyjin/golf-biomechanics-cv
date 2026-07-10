@@ -2,6 +2,7 @@
 
 import logging
 import math
+from collections.abc import Callable
 
 import cv2
 import mediapipe as mp
@@ -150,7 +151,11 @@ def _detect_club_tip(frame, landmarks: list[dict], width: int, height: int) -> d
     return {"x": best_point[0] / width, "y": best_point[1] / height}
 
 
-def analyze_video(path: str, quality: str = "fast") -> dict:
+def analyze_video(
+    path: str,
+    quality: str = "fast",
+    on_progress: Callable[[int, int], None] | None = None,
+) -> dict:
     """Decode a video frame-by-frame and extract 33 pose landmarks per frame.
 
     Returns {fps, width, height, frame_count, frames}; frames with no detected
@@ -158,8 +163,15 @@ def analyze_video(path: str, quality: str = "fast") -> dict:
     {x, y} normalized point from Hough-line detection anchored on the hands
     (see _detect_club_tip), or None when no confident line was found (a
     frame with no landmarks always has club_tip=None too, since detection
-    needs the hand landmarks to anchor its search). Raises ValueError if the
-    file cannot be decoded.
+    needs the hand landmarks to anchor its search).
+
+    on_progress(current_index, total_frames), if given, is called after each
+    frame is processed — total_frames comes from CAP_PROP_FRAME_COUNT, which
+    OpenCV can misreport for some containers/codecs, so callers should treat
+    it as a best-effort estimate (e.g. clamp progress below 100% until this
+    function actually returns) rather than an exact count.
+
+    Raises ValueError if the file cannot be decoded.
     """
     # Backend pinned explicitly: auto-selection (FFmpeg vs Media Foundation vs
     # DirectShow on Windows) is inconsistent about honoring rotation metadata,
@@ -182,6 +194,7 @@ def analyze_video(path: str, quality: str = "fast") -> dict:
         fps = 30.0
     width = 0
     height = 0
+    total_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
 
     frames = []
     # smooth_landmarks=False: the API smooths by default, but downstream
@@ -227,6 +240,8 @@ def analyze_video(path: str, quality: str = "fast") -> dict:
                 club_tip = _detect_club_tip(frame, landmarks, width, height)
             frames.append({"index": index, "t": index / fps, "landmarks": landmarks, "club_tip": club_tip})
             index += 1
+            if on_progress is not None:
+                on_progress(index, total_frames)
 
     capture.release()
 
