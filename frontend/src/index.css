@@ -288,8 +288,12 @@ button:disabled {
   justify-content: center;
 }
 
+/* Each slot's ideal width is its video's natural size at the single-video
+   height (aspect-ratio sets the box height), shrinking evenly when the row
+   is too narrow — so the two videos sit directly next to each other instead
+   of centering in stretched half-row slots. */
 .video-slot {
-  flex: 1 1 0;
+  flex: 0 1 calc(min(70vh, 640px) * var(--video-aspect, 0.6));
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -332,14 +336,12 @@ button:disabled {
 }
 
 /* Width-driven sizing (the single-video height rule can't fit two boxes);
-   the inline aspect-ratio sets the height. Cap width so the box never grows
-   taller than the single-video height. Constrain by width only — a
-   max-height on an aspect-ratio box would desync the overlay canvas. */
+   the box fills its slot and the inline aspect-ratio sets the height.
+   Constrain by width only — a max-height on an aspect-ratio box would
+   desync the overlay canvas. */
 .player-main .video-pair .video-box {
   height: auto;
   width: 100%;
-  max-width: calc(min(70vh, 640px) * var(--video-aspect, 0.6));
-  margin-inline: auto;
 }
 
 .video-placeholder {
@@ -670,8 +672,9 @@ button:disabled {
     flex-direction: column;
   }
 
-  .player-main .video-pair .video-box {
-    max-width: 100%;
+  /* In the stacked column, flex-basis would govern height, not width. */
+  .video-slot {
+    flex-basis: auto;
   }
 
   .side-panel {

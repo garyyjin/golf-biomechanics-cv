@@ -259,7 +259,10 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
       <div className="player-main">
         <div className={comparing ? "video-column comparing" : "video-column"}>
           <div className={comparing ? "video-pair" : "video-single"}>
-            <div className="video-slot">
+            <div
+              className="video-slot"
+              style={{ "--video-aspect": aspect } as React.CSSProperties}
+            >
               {comparing && (
                 <div className="video-slot-header">
                   <span className="video-slot-label">Your swing</span>
@@ -289,7 +292,16 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
             </div>
 
             {comparing && (
-              <div className="video-slot">
+              <div
+                className="video-slot"
+                style={
+                  {
+                    "--video-aspect": reference
+                      ? reference.analysis.width / reference.analysis.height
+                      : aspect,
+                  } as React.CSSProperties
+                }
+              >
                 <div className="video-slot-header">
                   <span className="video-slot-label">Reference</span>
                   <select
