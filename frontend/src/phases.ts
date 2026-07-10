@@ -26,7 +26,7 @@ function handY(landmarks: Landmark[] | null, handedness: Handedness): number | n
 }
 
 /** Linearly interpolate internal null runs bounded by two valid samples. */
-function interpolateGaps(raw: (number | null)[]): (number | null)[] {
+export function interpolateGaps(raw: (number | null)[]): (number | null)[] {
   const result = [...raw];
   let i = 0;
   while (i < result.length) {

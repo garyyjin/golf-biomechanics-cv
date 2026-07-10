@@ -6,6 +6,8 @@ import math
 import cv2
 import mediapipe as mp
 
+from app.club import detect_club
+
 logger = logging.getLogger(__name__)
 
 # model_complexity: 1 ("fast") vs 2 ("accurate", MediaPipe's heaviest model).
@@ -158,8 +160,16 @@ def analyze_video(path: str, quality: str = "fast") -> dict:
     {x, y} normalized point from Hough-line detection anchored on the hands
     (see _detect_club_tip), or None when no confident line was found (a
     frame with no landmarks always has club_tip=None too, since detection
-    needs the hand landmarks to anchor its search). Raises ValueError if the
-    file cannot be decoded.
+    needs the hand landmarks to anchor its search).
+
+    Also carries club_tip_yolo — a {x, y} normalized point from a separate,
+    still-experimental per-frame YOLOv8n clubhead detector (see app/club.py),
+    trained (once weights exist) independently of the Hough-line approach
+    above. Deliberately not reconciled with club_tip yet: this is additive
+    data for evaluating the two approaches side by side, not a replacement.
+    Always None until backend/app/models/clubhead.pt exists.
+
+    Raises ValueError if the file cannot be decoded.
     """
     # Backend pinned explicitly: auto-selection (FFmpeg vs Media Foundation vs
     # DirectShow on Windows) is inconsistent about honoring rotation metadata,
@@ -225,7 +235,16 @@ def analyze_video(path: str, quality: str = "fast") -> dict:
                     for lm in result.pose_landmarks.landmark
                 ]
                 club_tip = _detect_club_tip(frame, landmarks, width, height)
-            frames.append({"index": index, "t": index / fps, "landmarks": landmarks, "club_tip": club_tip})
+            club_tip_yolo = detect_club(frame)
+            frames.append(
+                {
+                    "index": index,
+                    "t": index / fps,
+                    "landmarks": landmarks,
+                    "club_tip": club_tip,
+                    "club_tip_yolo": club_tip_yolo,
+                }
+            )
             index += 1
 
     capture.release()
