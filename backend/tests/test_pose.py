@@ -63,10 +63,13 @@ def test_analyze_video_includes_club_tip_key(sample_video):
 
 def test_analyze_video_includes_club_tip_yolo_key(sample_video):
     result = analyze_video(str(sample_video))
-    # No backend/app/models/clubhead.pt yet (see app/club.py), so this is
-    # always None regardless of frame content — confirms the key exists.
+    # Shape-only: club_tip_yolo is None with no clubhead.pt installed, but a
+    # trained model may legitimately fire on some frames, so don't pin None.
     assert all("club_tip_yolo" in f for f in result["frames"])
-    assert all(f["club_tip_yolo"] is None for f in result["frames"])
+    assert all(
+        f["club_tip_yolo"] is None or set(f["club_tip_yolo"]) == {"x", "y"}
+        for f in result["frames"]
+    )
 
 
 def test_detect_club_tip_finds_a_drawn_line_from_the_hands():
