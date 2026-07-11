@@ -18,6 +18,8 @@ import { listReferenceSwings } from "./libraryApi";
 import type { LibraryEntry } from "./libraryApi";
 import { createOverlayRenderState, renderOverlayFrame } from "./overlayRenderer";
 import { ReferenceVideo } from "./ReferenceVideo";
+import { computeTempoScore, describeTempoRatio } from "./tempo";
+import type { TempoScore, TempoSegment } from "./tempo";
 import type { AnalysisResponse } from "./types";
 
 interface Props {
@@ -48,6 +50,7 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
   const [selectedReferenceId, setSelectedReferenceId] = useState<string | null>(null);
   const [compareMode, setCompareMode] = useState(false);
   const [naturalSpeed, setNaturalSpeed] = useState(false);
+  const [showTempo, setShowTempo] = useState(false);
   const [masterEnded, setMasterEnded] = useState(false);
 
   useEffect(() => {
@@ -208,6 +211,17 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
     [reference, feedback.phases, frames],
   );
 
+  // How much the phase-aligned sync must modify the reference's speed over
+  // the backswing and downswing — pure function of the two swings' phase
+  // timings, so it holds regardless of the current playback mode.
+  const tempoScore = useMemo(
+    () =>
+      reference
+        ? computeTempoScore(feedback.phases, reference.phases, frames, reference.analysis.frames)
+        : null,
+    [reference, feedback.phases, frames],
+  );
+
   const naturalSync = useMemo(
     () =>
       naturalSpeed && reference
@@ -364,6 +378,15 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
                     >
                       Regular speed
                     </button>
+                    <button
+                      type="button"
+                      className={showTempo ? "toggle selected" : "toggle"}
+                      aria-pressed={showTempo}
+                      title="Score how closely your tempo matches the reference — 10/10 means its speed never had to be modified"
+                      onClick={() => setShowTempo((v) => !v)}
+                    >
+                      Tempo score
+                    </button>
                     <select
                       className="reference-picker"
                       aria-label="Reference swing"
@@ -400,6 +423,8 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
               </div>
             )}
           </div>
+
+          {comparing && showTempo && tempoScore && <TempoCard tempo={tempoScore} />}
 
           <div className="controls">
             <button type="button" onClick={togglePlay}>
@@ -502,6 +527,38 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
       <button type="button" className="reset" onClick={onReset}>
         Analyze another video
       </button>
+    </div>
+  );
+}
+
+function TempoRow({ label, segment }: { label: string; segment: TempoSegment | null }) {
+  return (
+    <div className="tempo-row">
+      <span>{label}</span>
+      {segment ? (
+        <span className="tempo-detail">
+          {segment.score.toFixed(1)}/10 · {describeTempoRatio(segment.ratio)}
+        </span>
+      ) : (
+        <span className="tempo-detail">not detected</span>
+      )}
+    </div>
+  );
+}
+
+function TempoCard({ tempo }: { tempo: TempoScore }) {
+  return (
+    <div className="tempo-card">
+      <div className="tempo-card-header">
+        <h3>Tempo score</h3>
+        {tempo.overall !== null ? (
+          <span className="tempo-overall">{tempo.overall.toFixed(1)} / 10</span>
+        ) : (
+          <span className="tempo-detail">Swing phases couldn't be detected on both videos</span>
+        )}
+      </div>
+      <TempoRow label="Backswing" segment={tempo.backswing} />
+      <TempoRow label="Downswing" segment={tempo.downswing} />
     </div>
   );
 }
