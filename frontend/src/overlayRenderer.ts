@@ -1,5 +1,7 @@
+import { resolveClubTip } from "./club.ts";
+import type { ClubDetector, ClubPoint } from "./club.ts";
 import { drawClubTracer, drawOverlayLines, drawSkeleton } from "./draw.ts";
-import { clubTipEstimate, computeOverlayLines } from "./geometry.ts";
+import { computeOverlayLines } from "./geometry.ts";
 import type { AddressRefs, OverlayLine, Point } from "./geometry.ts";
 import { LandmarkSmoother, PointSmoother } from "./smoothing.ts";
 import type { Handedness, PoseFrame, View } from "./types.ts";
@@ -45,6 +47,8 @@ export function renderOverlayFrame(
   aspect: number,
   addressRefs: AddressRefs,
   state: OverlayRenderState,
+  detector: ClubDetector = "hough",
+  yoloTrack: (ClubPoint | null)[] | null = null,
 ): OverlayLine[] {
   const smoothed = state.smoother.apply(frames[index].landmarks, index);
   const overlay = computeOverlayLines(view, smoothed, handedness, aspect, addressRefs);
@@ -59,10 +63,7 @@ export function renderOverlayFrame(
   }
   state.prevIndex = index;
 
-  // Prefer the backend's Hough-line detection; fall back to the
-  // body-pose estimate when no confident line was found for this frame.
-  const detectedTip = frames[index].club_tip ?? null;
-  const rawTip = detectedTip ?? clubTipEstimate(smoothed, handedness);
+  const rawTip = resolveClubTip(detector, frames, index, yoloTrack, smoothed, handedness);
   const tip = state.clubSmoother.apply(rawTip, index);
   if (tip) {
     state.clubTrail = [...state.clubTrail, tip].slice(-CLUB_TRAIL_MAX_LENGTH);

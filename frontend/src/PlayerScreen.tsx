@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BenchmarkTable } from "./benchmarks";
+import { fillClubGaps, hasClubTrack } from "./club";
+import type { ClubDetector } from "./club";
 import {
   anchorTimePairs,
   buildNaturalSync,
@@ -52,6 +54,7 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
   const [naturalSpeed, setNaturalSpeed] = useState(false);
   const [showTempo, setShowTempo] = useState(false);
   const [masterEnded, setMasterEnded] = useState(false);
+  const [clubDetector, setClubDetector] = useState<ClubDetector>("hough");
 
   useEffect(() => {
     const video = videoRef.current;
@@ -115,6 +118,12 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
     [frames, handedness, aspect],
   );
 
+  // YOLO clubhead detections, with short misses bridged. Empty of detections
+  // when the analysis came from a backend with no clubhead.pt installed —
+  // that's what disables the YOLO detector option below.
+  const clubTrack = useMemo(() => fillClubGaps(frames), [frames]);
+  const yoloAvailable = useMemo(() => hasClubTrack(clubTrack), [clubTrack]);
+
   const feedback = useMemo(() => computeFeedback(analysis, benchmarks), [analysis, benchmarks]);
 
   // Down-the-line footage is most accurate when the camera sits directly on
@@ -131,6 +140,16 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
       Math.min(frame_count - 1, Math.max(0, Math.round(mediaTime * fps))),
     [fps, frame_count],
   );
+
+  // A "yolo" selection carried over from a previous video that did have
+  // detections would otherwise leave this one with no tracer at all.
+  const activeDetector: ClubDetector = yoloAvailable ? clubDetector : "hough";
+
+  // The trail is a rolling window of the last 18 points; without this it would
+  // splice the old detector's points onto the new one's for a beat after a switch.
+  useEffect(() => {
+    rendererStateRef.current.clubTrail = [];
+  }, [activeDetector]);
 
   const drawAt = useCallback(
     (mediaTime: number) => {
@@ -149,10 +168,12 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
         aspect,
         addressRefs,
         rendererStateRef.current,
+        activeDetector,
+        clubTrack,
       );
       setLines(overlay);
     },
-    [frames, frameIndexAt, view, handedness, aspect, addressRefs],
+    [frames, frameIndexAt, view, handedness, aspect, addressRefs, activeDetector, clubTrack],
   );
 
   // requestVideoFrameCallback loop: draws whenever the video presents a frame
@@ -477,6 +498,20 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
               onClick={() => setCompareMode((v) => !v)}
             >
               Compare
+            </button>
+            <button
+              type="button"
+              className={activeDetector === "yolo" ? "toggle selected" : "toggle"}
+              aria-pressed={activeDetector === "yolo"}
+              disabled={!yoloAvailable}
+              title={
+                yoloAvailable
+                  ? "Switch the club tracer between the Hough-line and YOLO detectors"
+                  : "This swing has no YOLO clubhead detections — train and install backend/app/models/clubhead.pt"
+              }
+              onClick={() => setClubDetector((d) => (d === "yolo" ? "hough" : "yolo"))}
+            >
+              Club: {activeDetector === "yolo" ? "YOLO" : "Hough"}
             </button>
           </div>
         </div>
