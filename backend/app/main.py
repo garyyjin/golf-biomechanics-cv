@@ -1,3 +1,4 @@
+import logging
 import os
 import shutil
 import tempfile
@@ -23,6 +24,8 @@ from app.pose import analyze_video
 
 ALLOWED_EXTENSIONS = {".mp4", ".mov", ".webm"}
 EXT_MEDIA_TYPES = {".mp4": "video/mp4", ".mov": "video/quicktime", ".webm": "video/webm"}
+
+logger = logging.getLogger(__name__)
 
 
 class SampleIn(BaseModel):
@@ -74,6 +77,13 @@ def _run_analyze_job(
         )
     except ValueError as exc:
         set_error(job_id, str(exc))
+    except Exception:
+        # A background thread's exceptions never reach the client — without
+        # this, anything analyze_video's callees can raise beyond ValueError
+        # (mediapipe/cv2/YOLO errors) would leave the job stuck in
+        # "processing" forever, and the frontend's poll loop has no timeout.
+        logger.exception("analyze job %s failed", job_id)
+        set_error(job_id, "Analysis failed unexpectedly")
     finally:
         os.unlink(tmp_path)
 
