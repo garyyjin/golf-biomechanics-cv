@@ -40,22 +40,28 @@ export default function App() {
 
   return (
     <>
-      <nav className="top-nav toggle-group" role="radiogroup" aria-label="Screen">
-        <button
-          type="button"
-          className={screen !== "library" ? "toggle selected" : "toggle"}
-          onClick={() => setScreen(session ? "player" : "upload")}
-        >
-          Analyze
-        </button>
-        <button
-          type="button"
-          className={screen === "library" ? "toggle selected" : "toggle"}
-          onClick={() => setScreen("library")}
-        >
-          Library
-        </button>
-      </nav>
+      <div className="top-nav-bar">
+        <span className="brand">
+          <span className="brand-mark" aria-hidden="true" />
+          Golf Swing Analyzer
+        </span>
+        <nav className="top-nav toggle-group" role="radiogroup" aria-label="Screen">
+          <button
+            type="button"
+            className={screen !== "library" ? "toggle selected" : "toggle"}
+            onClick={() => setScreen(session ? "player" : "upload")}
+          >
+            Analyze
+          </button>
+          <button
+            type="button"
+            className={screen === "library" ? "toggle selected" : "toggle"}
+            onClick={() => setScreen("library")}
+          >
+            Library
+          </button>
+        </nav>
+      </div>
 
       {screen === "library" ? (
         <LibraryScreen onBenchmarksChanged={refreshBenchmarks} />

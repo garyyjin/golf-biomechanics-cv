@@ -1,6 +1,7 @@
 import os
 import shutil
 import tempfile
+import threading
 from typing import Literal
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -8,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from app.jobs import create_job, get_job, set_done, set_error, set_progress
 from app.library import (
     create_entry,
     delete_entry,
@@ -42,13 +44,53 @@ app.add_middleware(
 )
 
 
-@app.post("/analyze")
+def _run_analyze_job(
+    job_id: str,
+    tmp_path: str,
+    view: str,
+    handedness: str,
+    quality: str,
+) -> None:
+    try:
+        result = analyze_video(
+            tmp_path,
+            quality=quality,
+            on_progress=lambda index, total: set_progress(
+                job_id, min(99.0, index / total * 100) if total > 0 else 0.0
+            ),
+        )
+        set_done(
+            job_id,
+            {
+                "fps": result["fps"],
+                "width": result["width"],
+                "height": result["height"],
+                "frame_count": result["frame_count"],
+                "view": view,
+                "handedness": handedness,
+                "quality": quality,
+                "frames": result["frames"],
+            },
+        )
+    except ValueError as exc:
+        set_error(job_id, str(exc))
+    finally:
+        os.unlink(tmp_path)
+
+
+@app.post("/analyze", status_code=202)
 def analyze(
     video: UploadFile = File(...),
     view: Literal["face_on", "down_the_line"] = Form(...),
     handedness: Literal["right", "left"] = Form(...),
     quality: Literal["fast", "accurate"] = Form(...),
 ):
+    """Kicks off pose extraction in a background thread and returns
+    immediately with a job id — extraction can take tens of seconds, and a
+    single request holding the connection open the whole time gives the
+    client nothing to show progress with. Poll GET /analyze/{job_id} for
+    status/progress and the final result.
+    """
     ext = os.path.splitext(video.filename or "")[1].lower()
     if ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(
@@ -59,23 +101,24 @@ def analyze(
     with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
         shutil.copyfileobj(video.file, tmp)
         tmp_path = tmp.name
-    try:
-        result = analyze_video(tmp_path, quality=quality)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    finally:
-        os.unlink(tmp_path)
 
-    return {
-        "fps": result["fps"],
-        "width": result["width"],
-        "height": result["height"],
-        "frame_count": result["frame_count"],
-        "view": view,
-        "handedness": handedness,
-        "quality": quality,
-        "frames": result["frames"],
-    }
+    job_id = create_job()
+    threading.Thread(
+        target=_run_analyze_job,
+        args=(job_id, tmp_path, view, handedness, quality),
+        daemon=True,
+    ).start()
+    return {"job_id": job_id}
+
+
+@app.get("/analyze/{job_id}")
+def get_analyze_job(job_id: str):
+    job = get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    if job["status"] == "error":
+        raise HTTPException(status_code=422, detail=job["error"])
+    return job
 
 
 @app.post("/reference-swings", status_code=201)
