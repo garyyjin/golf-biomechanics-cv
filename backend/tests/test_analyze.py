@@ -1,3 +1,5 @@
+import time
+
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -18,10 +20,34 @@ def post_analyze(video_path, **overrides):
         )
 
 
+def wait_for_job(job_id, timeout=10.0):
+    """Polls GET /analyze/{job_id} until it leaves "processing", mirroring
+    what a real client does. sample_video is tiny (10 frames, 64x64), so
+    this should resolve in well under a second in practice."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        response = client.get(f"/analyze/{job_id}")
+        if response.status_code != 200 or response.json()["status"] != "processing":
+            return response
+        time.sleep(0.02)
+    raise AssertionError(f"job {job_id} did not finish within {timeout}s")
+
+
+def run_analyze(video_path, **overrides):
+    """POST /analyze then poll until done; returns the final response."""
+    response = post_analyze(video_path, **overrides)
+    assert response.status_code == 202, response.text
+    job_id = response.json()["job_id"]
+    return wait_for_job(job_id)
+
+
 def test_analyze_ok(sample_video):
-    response = post_analyze(sample_video)
+    response = run_analyze(sample_video)
     assert response.status_code == 200
-    body = response.json()
+    job = response.json()
+    assert job["status"] == "done"
+    assert job["progress"] == 100.0
+    body = job["result"]
 
     assert body["frame_count"] > 0
     assert body["width"] == 64
@@ -75,9 +101,9 @@ def test_invalid_quality_422(sample_video):
 
 
 def test_analyze_accurate_quality_ok(sample_video):
-    response = post_analyze(sample_video, quality="accurate")
+    response = run_analyze(sample_video, quality="accurate")
     assert response.status_code == 200
-    body = response.json()
+    body = response.json()["result"]
 
     assert body["quality"] == "accurate"
     assert body["frame_count"] > 0
@@ -101,5 +127,10 @@ def test_bad_extension_422(tmp_path):
 def test_garbage_video_422(tmp_path):
     path = tmp_path / "garbage.mp4"
     path.write_bytes(b"\x00\x01\x02 definitely not an mp4")
-    response = post_analyze(path)
+    response = run_analyze(path)
     assert response.status_code == 422
+
+
+def test_unknown_job_404():
+    response = client.get("/analyze/does-not-exist")
+    assert response.status_code == 404
