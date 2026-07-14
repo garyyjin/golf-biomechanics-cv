@@ -22,19 +22,15 @@ async function parseErrorMessage(response: Response): Promise<string> {
   return message;
 }
 
-/**
- * POSTs the video, then polls GET /analyze/{job_id} until it leaves
- * "processing" — extraction can take tens of seconds, so a single request
- * held open the whole time gives the caller nothing to show progress with.
- * onProgress(percent), if given, fires on every poll tick.
- */
-export async function analyzeVideo(
+/** POSTs the video and returns the job id — extraction happens server-side
+ * in the background from this point on, so the id is enough to resume
+ * tracking the same job later without re-uploading. */
+export async function submitAnalysisJob(
   file: File,
   view: View,
   handedness: Handedness,
   quality: Quality,
-  onProgress?: (percent: number) => void,
-): Promise<AnalysisResponse> {
+): Promise<string> {
   const form = new FormData();
   form.append("video", file);
   form.append("view", view);
@@ -53,7 +49,19 @@ export async function analyzeVideo(
   }
 
   const { job_id: jobId } = await response.json();
+  return jobId;
+}
 
+/**
+ * Polls GET /analyze/{job_id} until it leaves "processing" — extraction can
+ * take tens of seconds, so a single request held open the whole time gives
+ * the caller nothing to show progress with. onProgress(percent), if given,
+ * fires on every poll tick.
+ */
+export async function pollAnalysisJob(
+  jobId: string,
+  onProgress?: (percent: number) => void,
+): Promise<AnalysisResponse> {
   let consecutiveFailures = 0;
   for (;;) {
     let poll: Response;
@@ -87,4 +95,23 @@ export async function analyzeVideo(
 
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
   }
+}
+
+/**
+ * Submits the video and polls it through to completion. onJobStarted, if
+ * given, fires as soon as the job id is known — callers can hang onto it to
+ * retry via pollAnalysisJob directly if a later poll fails, without
+ * re-uploading the file.
+ */
+export async function analyzeVideo(
+  file: File,
+  view: View,
+  handedness: Handedness,
+  quality: Quality,
+  onProgress?: (percent: number) => void,
+  onJobStarted?: (jobId: string) => void,
+): Promise<AnalysisResponse> {
+  const jobId = await submitAnalysisJob(file, view, handedness, quality);
+  onJobStarted?.(jobId);
+  return pollAnalysisJob(jobId, onProgress);
 }
