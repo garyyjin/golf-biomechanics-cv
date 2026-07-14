@@ -22,6 +22,8 @@ import { listReferenceSwings } from "./libraryApi";
 import type { LibraryEntry } from "./libraryApi";
 import { createOverlayRenderState, renderOverlayFrame } from "./overlayRenderer";
 import { ReferenceVideo } from "./ReferenceVideo";
+import { SwingScoreBadge } from "./SwingScoreBadge";
+import { computeSwingScore } from "./swingScore";
 import { computeTempoScore, describeTempoRatio } from "./tempo";
 import type { TempoScore, TempoSegment } from "./tempo";
 import type { AnalysisResponse } from "./types";
@@ -261,6 +263,7 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
   const yoloAvailable = useMemo(() => hasClubTrack(clubTrack), [clubTrack]);
 
   const feedback = useMemo(() => computeFeedback(analysis, benchmarks), [analysis, benchmarks]);
+  const swingScore = useMemo(() => computeSwingScore(feedback), [feedback]);
 
   // Down-the-line footage is most accurate when the camera sits directly on
   // the target line; a camera off to the side reveals stance width on
@@ -691,6 +694,8 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
               : undefined
           }
         >
+          <SwingScoreBadge score={swingScore} />
+
           <aside className="readout-panel">
             <h2>{view === "face_on" ? "Face-on" : "Down-the-line"}</h2>
             {lines.map((line) => (
