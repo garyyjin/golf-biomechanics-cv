@@ -130,6 +130,14 @@ export function useAnnotations(
     redraw();
   }, [redraw, version]);
 
+  // Read by the ResizeObserver below, which must always call the latest
+  // redraw without itself depending on it — frameIndex (and so redraw's
+  // identity) changes on every video frame during playback, and rebuilding
+  // the observer that often would reassign canvas.width/height every frame,
+  // forcing a full backing-bitmap reallocation many times a second.
+  const redrawRef = useRef(redraw);
+  redrawRef.current = redraw;
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -140,11 +148,11 @@ export function useAnnotations(
       canvas.height = Math.round(rect.height * dpr);
       const ctx = canvas.getContext("2d");
       if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      redraw();
+      redrawRef.current();
     });
     observer.observe(canvas);
     return () => observer.disconnect();
-  }, [redraw]);
+  }, []);
 
   const setActive = useCallback(
     (next: boolean) => {
