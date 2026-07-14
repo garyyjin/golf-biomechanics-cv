@@ -164,26 +164,33 @@ h3 {
 .file-button {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
-  width: fit-content;
-  max-width: 100%;
+  width: 100%;
   font-weight: 600;
   font-size: 14px;
   color: var(--color-ink);
   background: var(--color-surface-alt);
-  border: 1.5px solid var(--color-hairline);
+  border: 1.5px dashed var(--color-hairline-strong);
   border-radius: var(--radius-buttons);
-  padding: 10px 20px;
+  padding: 16px 20px;
   cursor: pointer;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  transition: border-color 0.15s ease, background-color 0.15s ease;
+  text-align: center;
+  transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
 }
 
 .file-button:hover {
   border-color: var(--color-hairline-strong);
   background: var(--color-accent);
+}
+
+.file-button.dragging {
+  border-color: var(--color-secondary);
+  background: var(--color-accent);
+  color: var(--color-secondary);
 }
 
 .file-button.disabled {
@@ -846,6 +853,43 @@ button:disabled {
   flex-direction: column;
   gap: 1.25rem;
   max-width: 420px;
+}
+
+.library-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.filter-search {
+  font: inherit;
+  font-size: 13px;
+  color: var(--color-ink);
+  background: var(--color-surface-alt);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-buttons);
+  padding: 8px 14px;
+  min-width: 0;
+  flex: 1 1 180px;
+  max-width: 260px;
+}
+
+.filter-search:focus-visible {
+  outline: 2px solid var(--color-secondary);
+  outline-offset: 1px;
+}
+
+.filter-clear {
+  padding: 2px 10px;
+  font-size: 12px;
+}
+
+.library-toolbar-divider {
+  width: 1px;
+  align-self: stretch;
+  background: var(--color-hairline);
+  margin: 0 2px 0 auto;
 }
 
 .library-list {
