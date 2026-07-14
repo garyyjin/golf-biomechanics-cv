@@ -50,7 +50,10 @@ export function UploadScreen({ onAnalyzed }: Props) {
 
   return (
     <div className="upload">
-      <h1>Golf Swing Analyzer</h1>
+      <h1>Analyze your swing</h1>
+      <p className="hint upload-subhead">
+        Upload a swing video to get pose-based biomechanics feedback, phase-by-phase.
+      </p>
 
       <FileField
         label="Swing video (mp4, mov or webm)"

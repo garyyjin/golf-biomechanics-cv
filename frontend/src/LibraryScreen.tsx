@@ -25,6 +25,16 @@ const HANDEDNESS_OPTIONS: { value: Handedness; label: string }[] = [
   { value: "left", label: "Left" },
 ];
 
+const VIEW_FILTER_OPTIONS: { value: View | "all"; label: string }[] = [
+  { value: "all", label: "All views" },
+  ...VIEW_OPTIONS,
+];
+
+const HANDEDNESS_FILTER_OPTIONS: { value: Handedness | "all"; label: string }[] = [
+  { value: "all", label: "Both" },
+  ...HANDEDNESS_OPTIONS,
+];
+
 type LibraryViewMode = "list" | "grid";
 
 function VideoIcon() {
@@ -46,6 +56,9 @@ export function LibraryScreen({ onBenchmarksChanged }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [libraryViewMode, setLibraryViewMode] = useState<LibraryViewMode>("list");
   const [selectedEntry, setSelectedEntry] = useState<LibraryEntry | null>(null);
+  const [search, setSearch] = useState("");
+  const [filterView, setFilterView] = useState<View | "all">("all");
+  const [filterHandedness, setFilterHandedness] = useState<Handedness | "all">("all");
 
   useEffect(() => {
     void refreshEntries();
@@ -97,6 +110,16 @@ export function LibraryScreen({ onBenchmarksChanged }: Props) {
       setDeletingId(null);
     }
   }
+
+  const filteredEntries = entries.filter((entry) => {
+    if (filterView !== "all" && entry.view !== filterView) return false;
+    if (filterHandedness !== "all" && entry.handedness !== filterHandedness) return false;
+    if (search.trim() && !entry.filename.toLowerCase().includes(search.trim().toLowerCase())) {
+      return false;
+    }
+    return true;
+  });
+  const hasActiveFilters = search.trim() !== "" || filterView !== "all" || filterHandedness !== "all";
 
   return (
     <div className="library">
@@ -157,32 +180,93 @@ export function LibraryScreen({ onBenchmarksChanged }: Props) {
         {error && <p className="error">{error}</p>}
       </div>
 
-      <div className="toggle-group" role="radiogroup" aria-label="Library view">
-        <button
-          type="button"
-          className={libraryViewMode === "list" ? "toggle selected" : "toggle"}
-          aria-pressed={libraryViewMode === "list"}
-          onClick={() => setLibraryViewMode("list")}
-        >
-          List
-        </button>
-        <button
-          type="button"
-          className={libraryViewMode === "grid" ? "toggle selected" : "toggle"}
-          aria-pressed={libraryViewMode === "grid"}
-          onClick={() => setLibraryViewMode("grid")}
-        >
-          Grid
-        </button>
+      <div className="library-toolbar">
+        <input
+          type="search"
+          className="filter-search"
+          placeholder="Search filename…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          aria-label="Search by filename"
+        />
+
+        <div className="toggle-group" role="radiogroup" aria-label="Filter by camera view">
+          {VIEW_FILTER_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              className={filterView === opt.value ? "toggle selected" : "toggle"}
+              aria-pressed={filterView === opt.value}
+              onClick={() => setFilterView(opt.value)}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="toggle-group" role="radiogroup" aria-label="Filter by handedness">
+          {HANDEDNESS_FILTER_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              className={filterHandedness === opt.value ? "toggle selected" : "toggle"}
+              aria-pressed={filterHandedness === opt.value}
+              onClick={() => setFilterHandedness(opt.value)}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="library-toolbar-divider" aria-hidden="true" />
+
+        <div className="toggle-group" role="radiogroup" aria-label="Library view">
+          <button
+            type="button"
+            className={libraryViewMode === "list" ? "toggle selected" : "toggle"}
+            aria-pressed={libraryViewMode === "list"}
+            onClick={() => setLibraryViewMode("list")}
+          >
+            List
+          </button>
+          <button
+            type="button"
+            className={libraryViewMode === "grid" ? "toggle selected" : "toggle"}
+            aria-pressed={libraryViewMode === "grid"}
+            onClick={() => setLibraryViewMode("grid")}
+          >
+            Grid
+          </button>
+        </div>
       </div>
 
       {loadingList ? (
         <p>Loading…</p>
       ) : entries.length === 0 ? (
         <p className="hint">No reference swings yet.</p>
+      ) : filteredEntries.length === 0 ? (
+        <p className="hint">
+          No reference swings match your filters.
+          {hasActiveFilters && (
+            <>
+              {" "}
+              <button
+                type="button"
+                className="reset filter-clear"
+                onClick={() => {
+                  setSearch("");
+                  setFilterView("all");
+                  setFilterHandedness("all");
+                }}
+              >
+                Clear filters
+              </button>
+            </>
+          )}
+        </p>
       ) : libraryViewMode === "list" ? (
         <div className="library-list">
-          {entries.map((entry) => (
+          {filteredEntries.map((entry) => (
             <div key={entry.id} className="library-entry">
               <video controls src={referenceSwingVideoUrl(entry.id)} />
               <div className="library-entry-meta">
@@ -204,7 +288,7 @@ export function LibraryScreen({ onBenchmarksChanged }: Props) {
         </div>
       ) : (
         <div className="library-grid">
-          {entries.map((entry) => (
+          {filteredEntries.map((entry) => (
             <button
               key={entry.id}
               type="button"
