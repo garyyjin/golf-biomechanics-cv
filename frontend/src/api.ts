@@ -2,6 +2,7 @@ import type { AnalysisResponse, Handedness, Quality, View } from "./types";
 
 const API_URL = "http://localhost:8000/analyze";
 const POLL_INTERVAL_MS = 300;
+const MAX_CONSECUTIVE_POLL_FAILURES = 5;
 
 interface AnalyzeJob {
   status: "processing" | "done" | "error";
@@ -53,13 +54,23 @@ export async function analyzeVideo(
 
   const { job_id: jobId } = await response.json();
 
+  let consecutiveFailures = 0;
   for (;;) {
     let poll: Response;
     try {
       poll = await fetch(`${API_URL}/${jobId}`);
     } catch {
-      throw new Error("Could not reach the analysis server. Is the backend running on port 8000?");
+      // A single dropped poll over a request that can run for tens of
+      // seconds shouldn't fail the whole analysis — only give up after a
+      // run of failures that suggests the server is actually unreachable.
+      consecutiveFailures += 1;
+      if (consecutiveFailures >= MAX_CONSECUTIVE_POLL_FAILURES) {
+        throw new Error("Could not reach the analysis server. Is the backend running on port 8000?");
+      }
+      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+      continue;
     }
+    consecutiveFailures = 0;
 
     if (!poll.ok) {
       throw new Error(await parseErrorMessage(poll));
@@ -68,7 +79,10 @@ export async function analyzeVideo(
     const job: AnalyzeJob = await poll.json();
     onProgress?.(job.progress);
 
-    if (job.status === "done" && job.result) return job.result;
+    if (job.status === "done") {
+      if (!job.result) throw new Error("Analysis finished with no result");
+      return job.result;
+    }
     if (job.status === "error") throw new Error(job.error ?? "Analysis failed");
 
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
