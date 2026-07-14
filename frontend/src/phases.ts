@@ -13,6 +13,9 @@ export interface SwingPhases {
 const MIN_VALID_FRAMES = 10;
 const MIN_RISE = 0.03; // normalized-y units; below this, no detectable backswing motion
 const TAKEAWAY_FRACTION = 0.25;
+const ADDRESS_SETTLE_SECONDS = 2; // how far past the clip's start to look for a settled stance
+const ADDRESS_SETTLE_STEP_TOLERANCE = 0.008; // normalized-y units per frame; below this counts as "not moving"
+const ADDRESS_MIN_HOLD_SECONDS = 0.3; // how long a still stretch must last to count as a real hold, not a pause
 
 function handY(landmarks: Landmark[] | null, handedness: Handedness): number | null {
   if (!landmarks) return null;
@@ -94,6 +97,39 @@ function argmax(series: (number | null)[], from: number, to: number): number | n
 }
 
 /**
+ * Golfers often keep settling into their stance — a waggle, a bit more
+ * forward bend — for a moment after recording starts, so the very first
+ * detected frame can catch that transient instead of the setup position
+ * actually held right before the swing begins. Sometimes that settling
+ * changes hand height too (bending in further tends to lower it), so
+ * comparing everything back to the first frame's own value isn't enough —
+ * this instead looks for the LATEST run of consecutive frames where
+ * (already smoothed, denoised) hand height barely moves frame-to-frame,
+ * long enough to count as a real hold rather than a momentary pause, and
+ * lands on that run's last frame. Bounded by ADDRESS_SETTLE_SECONDS so a
+ * genuinely fast takeaway can't be swallowed by the search.
+ */
+function refineAddressIndex(smoothed: (number | null)[], bootstrapIndex: number, fps: number): number {
+  const windowEnd = Math.min(smoothed.length - 1, bootstrapIndex + Math.round(fps * ADDRESS_SETTLE_SECONDS));
+  const minHoldFrames = Math.max(3, Math.round(fps * ADDRESS_MIN_HOLD_SECONDS));
+
+  let runStart: number | null = null;
+  let chosenEnd: number | null = null;
+  for (let i = bootstrapIndex + 1; i <= windowEnd; i++) {
+    const prev = smoothed[i - 1];
+    const cur = smoothed[i];
+    const stable = prev !== null && cur !== null && Math.abs(cur - prev) <= ADDRESS_SETTLE_STEP_TOLERANCE;
+    if (stable) {
+      if (runStart === null) runStart = i - 1;
+      if (i - runStart + 1 >= minHoldFrames) chosenEnd = i;
+    } else {
+      runStart = null;
+    }
+  }
+  return chosenEnd ?? bootstrapIndex;
+}
+
+/**
  * Detects swing-phase frame indices from lead/trail wrist height over time.
  * Heuristic, not ML: a golf swing's hand-height trajectory has a distinctive
  * shape (flat at address, rising through backswing, peak at the top, sharp
@@ -117,16 +153,17 @@ export function detectPhases(frames: PoseFrame[], handedness: Handedness, fps: n
   };
 
   const addressFrame = findAddressFrame(frames);
-  const addressIndex = addressFrame ? frames.indexOf(addressFrame) : null;
-  if (addressIndex === null) return empty;
+  const bootstrapAddressIndex = addressFrame ? frames.indexOf(addressFrame) : null;
+  if (bootstrapAddressIndex === null) return empty;
 
   const raw = frames.map((f) => handY(f.landmarks, handedness));
   const validCount = raw.filter((v) => v !== null).length;
-  if (validCount < MIN_VALID_FRAMES) return { ...empty, address: addressIndex };
+  if (validCount < MIN_VALID_FRAMES) return { ...empty, address: bootstrapAddressIndex };
 
   const interpolated = interpolateGaps(raw);
   const window = Math.max(3, Math.round(fps / 6));
   const smoothed = movingAverage(interpolated, window);
+  const addressIndex = refineAddressIndex(smoothed, bootstrapAddressIndex, fps);
 
   const velocity: (number | null)[] = smoothed.map((_, i) => {
     if (i === 0 || i === smoothed.length - 1) return null;

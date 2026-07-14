@@ -49,7 +49,10 @@ describe("detectPhases", () => {
     const frames = makeSwingFrames(CLEAN_SWING_Y, FPS);
     const phases = detectPhases(frames, "right", FPS);
 
-    expect(phases.address).toBe(0);
+    // Refined past frame 0 to the end of the address hold ([0,14]) instead
+    // of landing on the very first frame — see refineAddressIndex.
+    expect(phases.address).toBeGreaterThan(0);
+    expect(phases.address!).toBeLessThan(15);
     expect(phases.takeaway).not.toBeNull();
     expect(phases.top).not.toBeNull();
     expect(phases.downswing).not.toBeNull();
@@ -93,6 +96,28 @@ describe("detectPhases", () => {
     expect(phases.followThrough).toBeNull();
   });
 
+  it("finds the settled stance even when it differs from frame 0's position", () => {
+    // Frame 0 catches the golfer still settling (hand height 0.82, not yet
+    // at address), which then transitions into the real address hold at
+    // 0.9 — the exact "still adjusting when recording starts" case this
+    // refinement is meant to fix. The true hold is frames [10,24].
+    const settlingIn: number[] = [
+      ...hold(0.82, 6),
+      ...ramp(0.82, ADDRESS_Y, 4),
+      ...hold(ADDRESS_Y, 15),
+      ...ramp(ADDRESS_Y, TOP_Y, 30),
+      ...hold(TOP_Y, 5),
+      ...ramp(TOP_Y, IMPACT_Y, 7),
+      ...hold(IMPACT_Y, 3),
+      ...ramp(IMPACT_Y, FINISH_Y, 20),
+    ];
+    const frames = makeSwingFrames(settlingIn, FPS);
+    const phases = detectPhases(frames, "right", FPS);
+
+    expect(phases.address!).toBeGreaterThanOrEqual(10);
+    expect(phases.address!).toBeLessThanOrEqual(24);
+  });
+
   it("still detects an ordered set of phases with jitter added", () => {
     const jittered = CLEAN_SWING_Y.map((y, i) => y + (i % 2 === 0 ? 0.01 : -0.01));
     const frames = makeSwingFrames(jittered, FPS);
@@ -114,7 +139,8 @@ describe("detectPhases", () => {
     const frames = makeSwingFrames(gapped, FPS);
     const phases = detectPhases(frames, "right", FPS);
 
-    expect(phases.address).toBe(0);
+    expect(phases.address).toBeGreaterThan(0);
+    expect(phases.address!).toBeLessThan(15);
     expect(phases.top).not.toBeNull();
     expect(phases.impact).not.toBeNull();
     expect(phases.top!).toBeLessThan(phases.impact!);
@@ -123,7 +149,9 @@ describe("detectPhases", () => {
   it("detects only address when there is no real motion", () => {
     const frames = makeSwingFrames(hold(0.5, 60), FPS);
     const phases = detectPhases(frames, "right", FPS);
-    expect(phases.address).toBe(0);
+    // A perfectly flat clip has no settled/moving distinction to find, so
+    // the exact index isn't meaningful here — just that it resolved.
+    expect(phases.address).not.toBeNull();
     expect(phases.takeaway).toBeNull();
     expect(phases.top).toBeNull();
     expect(phases.impact).toBeNull();
