@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ANNOTATION_COLORS, ANNOTATION_TOOLS, useAnnotations } from "./annotations";
+import type { AnnotationTool } from "./annotations";
 import type { BenchmarkTable } from "./benchmarks";
 import { fillClubGaps, hasClubTrack } from "./club";
 import type { ClubDetector } from "./club";
@@ -40,6 +42,33 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
   const { fps, frame_count, frames, view, handedness, width, height } = analysis;
   const aspect = width / height;
 
+  // The video-box's exact pixel size, fit within the frame that's left after
+  // the annotation sidebar claims its column. Measured in JS rather than via
+  // CSS aspect-ratio + flex-grow + max-height: when the aspect-derived size
+  // is the one that ends up clamped by max-height, the flex-grown dimension
+  // doesn't shrink back to match, silently breaking the aspect ratio (the
+  // pose overlay canvas then scales landmarks against the wrong box).
+  const videoFrameRef = useRef<HTMLDivElement>(null);
+  const [videoBoxSize, setVideoBoxSize] = useState<{ width: number; height: number } | null>(null);
+
+  useEffect(() => {
+    const frame = videoFrameRef.current;
+    if (!frame) return;
+    const observer = new ResizeObserver(() => {
+      const rect = frame.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
+      let boxWidth = rect.width;
+      let boxHeight = boxWidth / aspect;
+      if (boxHeight > rect.height) {
+        boxHeight = rect.height;
+        boxWidth = boxHeight * aspect;
+      }
+      setVideoBoxSize({ width: boxWidth, height: boxHeight });
+    });
+    observer.observe(frame);
+    return () => observer.disconnect();
+  }, [aspect]);
+
   const [playing, setPlaying] = useState(false);
   const [duration, setDuration] = useState(0);
   const [time, setTime] = useState(0);
@@ -55,6 +84,113 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
   const [showTempo, setShowTempo] = useState(false);
   const [masterEnded, setMasterEnded] = useState(false);
   const [clubDetector, setClubDetector] = useState<ClubDetector>("hough");
+
+  // Compare mode: both slots must resolve to the exact same height, or the
+  // two swings visibly don't line up. Deriving each slot's width from its
+  // OWN measured element (as a previous version of this did) races: the
+  // primary slot's measurement depends on layout that its own resulting
+  // width then changes, so the two slots could settle on different row
+  // heights depending on observer callback order. Measuring the shared row
+  // (.video-pair) once instead — its height comes only from ancestors
+  // (nav/controls chrome), never from either slot's own content — gives a
+  // single source of truth that both slots derive their width from.
+  const videoPairRef = useRef<HTMLDivElement>(null);
+  const [compareRowHeight, setCompareRowHeight] = useState<number | null>(null);
+  const comparingNow = compareMode && referenceStatus !== "unavailable";
+
+  useEffect(() => {
+    if (!comparingNow) {
+      setCompareRowHeight(null);
+      return;
+    }
+    const pair = videoPairRef.current;
+    if (!pair) return;
+    const observer = new ResizeObserver(() => {
+      const rowHeight = pair.getBoundingClientRect().height;
+      if (rowHeight <= 0) return;
+      setCompareRowHeight(rowHeight);
+    });
+    observer.observe(pair);
+    return () => observer.disconnect();
+  }, [comparingNow]);
+
+  // Must match .annotation-sidebar's width and .video-stage's gap.
+  const SIDEBAR_WIDTH = 58;
+  const STAGE_GAP = 8;
+  const referenceAspect = reference ? reference.analysis.width / reference.analysis.height : aspect;
+  const primarySlotWidth =
+    compareRowHeight != null ? SIDEBAR_WIDTH + STAGE_GAP + compareRowHeight * aspect : null;
+  const referenceSlotWidth = compareRowHeight != null ? compareRowHeight * referenceAspect : null;
+
+  const playerMainRef = useRef<HTMLDivElement>(null);
+  const [sidePanelWidth, setSidePanelWidth] = useState<number | null>(null);
+  const [resizingSidePanel, setResizingSidePanel] = useState(false);
+  const resizeStateRef = useRef<{ startX: number; startWidth: number } | null>(null);
+
+  const onSidePanelResizeStart = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const panel = playerMainRef.current?.querySelector<HTMLElement>(".side-panel");
+    const startWidth = panel?.getBoundingClientRect().width ?? sidePanelWidth ?? 420;
+    resizeStateRef.current = { startX: e.clientX, startWidth };
+    setResizingSidePanel(true);
+    e.currentTarget.setPointerCapture(e.pointerId);
+  }, [sidePanelWidth]);
+
+  const onSidePanelResizeMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const state = resizeStateRef.current;
+    if (!state) return;
+    const containerWidth = playerMainRef.current?.getBoundingClientRect().width ?? Infinity;
+    // Leave the video column at least 320px so dragging can't collapse it away.
+    const maxWidth = Math.min(800, containerWidth - 320);
+    const delta = e.clientX - state.startX;
+    setSidePanelWidth(Math.min(maxWidth, Math.max(320, state.startWidth - delta)));
+  }, []);
+
+  const onSidePanelResizeEnd = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    resizeStateRef.current = null;
+    setResizingSidePanel(false);
+    e.currentTarget.releasePointerCapture(e.pointerId);
+  }, []);
+
+  const [controlsHeight, setControlsHeight] = useState<number | null>(null);
+  const [resizingControls, setResizingControls] = useState(false);
+  const controlsResizeStateRef = useRef<{ startY: number; startHeight: number } | null>(null);
+  const controlsRef = useRef<HTMLDivElement>(null);
+
+  const onControlsResizeStart = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const startHeight = controlsRef.current?.getBoundingClientRect().height ?? controlsHeight ?? 55;
+    controlsResizeStateRef.current = { startY: e.clientY, startHeight };
+    setResizingControls(true);
+    e.currentTarget.setPointerCapture(e.pointerId);
+  }, [controlsHeight]);
+
+  const onControlsResizeMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const state = controlsResizeStateRef.current;
+    if (!state) return;
+    // Dragging the handle up should grow the bar (it's pinned to the
+    // bottom), so an upward (negative) pointer delta increases height.
+    const delta = e.clientY - state.startY;
+    setControlsHeight(Math.min(220, Math.max(55, state.startHeight - delta)));
+  }, []);
+
+  const onControlsResizeEnd = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    controlsResizeStateRef.current = null;
+    setResizingControls(false);
+    e.currentTarget.releasePointerCapture(e.pointerId);
+  }, []);
+
+  // Below the mobile breakpoint the panes stack instead of sitting
+  // side-by-side, so a dragged pixel size would otherwise pin a pane to the
+  // wrong dimension (and fight the stacked layout's own sizing).
+  useEffect(() => {
+    function handleResize() {
+      if (window.innerWidth <= 800) {
+        setSidePanelWidth(null);
+        setControlsHeight(null);
+      }
+    }
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -329,50 +465,139 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
 
   const currentIndex = frameIndexAt(time);
 
+  const annotations = useAnnotations(currentIndex, videoRef);
+
   const comparing = compareMode && referenceStatus !== "unavailable";
 
   return (
     <div className="player">
-      <div className="player-main">
+      <div className="player-main" ref={playerMainRef}>
         <div className={comparing ? "video-column comparing" : "video-column"}>
-          <div className={comparing ? "video-pair" : "video-single"}>
+          <div className={comparing ? "video-pair" : "video-single"} ref={videoPairRef}>
             <div
-              className="video-slot"
-              style={{ "--video-aspect": aspect } as React.CSSProperties}
+              className="video-slot video-slot-primary"
+              style={
+                {
+                  "--video-aspect": aspect,
+                  ...(primarySlotWidth ? { flexBasis: primarySlotWidth, width: primarySlotWidth } : {}),
+                } as React.CSSProperties
+              }
             >
               {comparing && (
                 <div className="video-slot-header">
                   <span className="video-slot-label">Your swing</span>
                 </div>
               )}
-              <div
-                className={hideVideo ? "video-box hide-video" : "video-box"}
-                style={{ aspectRatio: aspect, "--video-aspect": aspect } as React.CSSProperties}
-              >
-                <video
-                  ref={videoRef}
-                  src={videoUrl}
-                  playsInline
-                  onPlay={() => {
-                    setPlaying(true);
-                    setMasterEnded(false);
-                  }}
-                  onPause={() => setPlaying(false)}
-                  onEnded={() => {
-                    setPlaying(false);
-                    setMasterEnded(true);
-                  }}
-                  onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
-                  onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}
-                  onSeeked={(e) => {
-                    // Covers paused scrubs in browsers that don't fire a video frame
-                    // callback for them.
-                    drawAt(e.currentTarget.currentTime);
-                    setTime(e.currentTarget.currentTime);
-                    setMasterEnded(e.currentTarget.ended);
-                  }}
-                />
-                <canvas ref={canvasRef} className="overlay" />
+              <div className="video-stage">
+                <div className="annotation-sidebar">
+                  <button
+                    type="button"
+                    className={annotations.active ? "icon-button selected" : "icon-button"}
+                    aria-pressed={annotations.active}
+                    aria-label={annotations.active ? "Done drawing" : "Draw"}
+                    title="Draw on the paused frame to mark up your swing — marks stay attached to this frame"
+                    onClick={() => annotations.setActive(!annotations.active)}
+                  >
+                    <PencilIcon />
+                  </button>
+                  {annotations.active && (
+                    <>
+                      <div className="annotation-tool-group" role="radiogroup" aria-label="Annotation tool">
+                        {ANNOTATION_TOOLS.map((t) => (
+                          <button
+                            key={t.value}
+                            type="button"
+                            className={annotations.tool === t.value ? "icon-button selected" : "icon-button"}
+                            aria-pressed={annotations.tool === t.value}
+                            aria-label={t.label}
+                            title={t.label}
+                            onClick={() => annotations.setTool(t.value)}
+                          >
+                            <ToolIcon tool={t.value} />
+                          </button>
+                        ))}
+                      </div>
+                      <div className="annotation-swatches" role="radiogroup" aria-label="Annotation color">
+                        {ANNOTATION_COLORS.map((c) => (
+                          <button
+                            key={c}
+                            type="button"
+                            className={annotations.color === c ? "annotation-swatch selected" : "annotation-swatch"}
+                            style={{ background: c }}
+                            aria-pressed={annotations.color === c}
+                            aria-label={`Color ${c}`}
+                            onClick={() => annotations.setColor(c)}
+                          />
+                        ))}
+                      </div>
+                      <button
+                        type="button"
+                        className="icon-button"
+                        aria-label="Undo"
+                        title="Undo"
+                        disabled={!annotations.hasStrokesOnFrame}
+                        onClick={annotations.undo}
+                      >
+                        <UndoIcon />
+                      </button>
+                      <button
+                        type="button"
+                        className="icon-button"
+                        aria-label="Clear"
+                        title="Clear"
+                        disabled={!annotations.hasStrokesOnFrame}
+                        onClick={annotations.clearFrame}
+                      >
+                        <ClearIcon />
+                      </button>
+                    </>
+                  )}
+                </div>
+                <div className="video-frame" ref={videoFrameRef}>
+                  <div
+                    className={hideVideo ? "video-box hide-video" : "video-box"}
+                    style={{
+                      aspectRatio: aspect,
+                      "--video-aspect": aspect,
+                      ...(videoBoxSize
+                        ? { width: videoBoxSize.width, height: videoBoxSize.height }
+                        : {}),
+                    } as React.CSSProperties}
+                  >
+                    <video
+                      ref={videoRef}
+                      src={videoUrl}
+                      playsInline
+                      onPlay={() => {
+                        setPlaying(true);
+                        setMasterEnded(false);
+                      }}
+                      onPause={() => setPlaying(false)}
+                      onEnded={() => {
+                        setPlaying(false);
+                        setMasterEnded(true);
+                      }}
+                      onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
+                      onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}
+                      onSeeked={(e) => {
+                        // Covers paused scrubs in browsers that don't fire a video frame
+                        // callback for them.
+                        drawAt(e.currentTarget.currentTime);
+                        setTime(e.currentTarget.currentTime);
+                        setMasterEnded(e.currentTarget.ended);
+                      }}
+                    />
+                    <canvas ref={canvasRef} className="overlay" />
+                    <canvas
+                      ref={annotations.canvasRef}
+                      className={annotations.active ? "annotation-canvas active" : "annotation-canvas"}
+                      onPointerDown={annotations.onPointerDown}
+                      onPointerMove={annotations.onPointerMove}
+                      onPointerUp={annotations.onPointerUp}
+                      onPointerLeave={annotations.onPointerUp}
+                    />
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -381,9 +606,10 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
                 className="video-slot"
                 style={
                   {
-                    "--video-aspect": reference
-                      ? reference.analysis.width / reference.analysis.height
-                      : aspect,
+                    "--video-aspect": referenceAspect,
+                    ...(referenceSlotWidth
+                      ? { flexBasis: referenceSlotWidth, width: referenceSlotWidth }
+                      : {}),
                   } as React.CSSProperties
                 }
               >
@@ -446,77 +672,25 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
           </div>
 
           {comparing && showTempo && tempoScore && <TempoCard tempo={tempoScore} />}
-
-          <div className="controls">
-            <button type="button" onClick={togglePlay}>
-              {playing ? "Pause" : "Play"}
-            </button>
-            <input
-              type="range"
-              className="scrub"
-              min={0}
-              max={duration || 0}
-              step={1 / fps}
-              value={Math.min(time, duration || time)}
-              onChange={(e) => seekTo(Number(e.target.value))}
-              aria-label="Scrub"
-            />
-            <span className="frame-label">
-              frame {currentIndex + 1}/{frame_count}
-            </span>
-            <div className="speed-group" role="radiogroup" aria-label="Playback speed">
-              {SPEED_OPTIONS.map((rate) => (
-                <button
-                  key={rate}
-                  type="button"
-                  className={playbackRate === rate ? "toggle speed-btn selected" : "toggle speed-btn"}
-                  aria-pressed={playbackRate === rate}
-                  onClick={() => setPlaybackRate(rate)}
-                >
-                  {rate}x
-                </button>
-              ))}
-            </div>
-            <button
-              type="button"
-              className={hideVideo ? "toggle selected" : "toggle"}
-              aria-pressed={hideVideo}
-              onClick={() => setHideVideo((v) => !v)}
-            >
-              Skeleton only
-            </button>
-            <button
-              type="button"
-              className={compareMode ? "toggle selected" : "toggle"}
-              aria-pressed={compareMode}
-              disabled={referenceStatus === "unavailable"}
-              title={
-                referenceStatus === "unavailable"
-                  ? "Add a matching-view reference swing to your library to compare"
-                  : undefined
-              }
-              onClick={() => setCompareMode((v) => !v)}
-            >
-              Compare
-            </button>
-            <button
-              type="button"
-              className={activeDetector === "yolo" ? "toggle selected" : "toggle"}
-              aria-pressed={activeDetector === "yolo"}
-              disabled={!yoloAvailable}
-              title={
-                yoloAvailable
-                  ? "Switch the club tracer between the Hough-line and YOLO detectors"
-                  : "This swing has no YOLO clubhead detections — train and install backend/app/models/clubhead.pt"
-              }
-              onClick={() => setClubDetector((d) => (d === "yolo" ? "hough" : "yolo"))}
-            >
-              Club: {activeDetector === "yolo" ? "YOLO" : "Hough"}
-            </button>
-          </div>
         </div>
 
-        <div className="side-panel">
+        <div
+          className={resizingSidePanel ? "resize-handle dragging" : "resize-handle"}
+          onPointerDown={onSidePanelResizeStart}
+          onPointerMove={onSidePanelResizeMove}
+          onPointerUp={onSidePanelResizeEnd}
+          onDoubleClick={() => setSidePanelWidth(null)}
+          title="Drag to resize · double-click to reset"
+        />
+
+        <div
+          className="side-panel"
+          style={
+            sidePanelWidth !== null
+              ? { flex: `0 0 ${sidePanelWidth}px`, width: sidePanelWidth, maxWidth: sidePanelWidth }
+              : undefined
+          }
+        >
           <aside className="readout-panel">
             <h2>{view === "face_on" ? "Face-on" : "Down-the-line"}</h2>
             {lines.map((line) => (
@@ -558,12 +732,181 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
         </div>
       </div>
 
+      <div
+        className={resizingControls ? "controls-resize-handle dragging" : "controls-resize-handle"}
+        onPointerDown={onControlsResizeStart}
+        onPointerMove={onControlsResizeMove}
+        onPointerUp={onControlsResizeEnd}
+        onDoubleClick={() => setControlsHeight(null)}
+        title="Drag to resize · double-click to reset"
+      />
+
+      <div
+        className="controls"
+        ref={controlsRef}
+        style={controlsHeight !== null ? { height: controlsHeight } : undefined}
+      >
+        <button type="button" onClick={togglePlay}>
+          {playing ? "Pause" : "Play"}
+        </button>
+        <input
+          type="range"
+          className="scrub"
+          min={0}
+          max={duration || 0}
+          step={1 / fps}
+          value={Math.min(time, duration || time)}
+          onChange={(e) => seekTo(Number(e.target.value))}
+          aria-label="Scrub"
+        />
+        <span className="frame-label">
+          frame {currentIndex + 1}/{frame_count}
+        </span>
+        <div className="speed-group" role="radiogroup" aria-label="Playback speed">
+          {SPEED_OPTIONS.map((rate) => (
+            <button
+              key={rate}
+              type="button"
+              className={playbackRate === rate ? "toggle speed-btn selected" : "toggle speed-btn"}
+              aria-pressed={playbackRate === rate}
+              onClick={() => setPlaybackRate(rate)}
+            >
+              {rate}x
+            </button>
+          ))}
+        </div>
+        <button
+          type="button"
+          className={hideVideo ? "toggle selected" : "toggle"}
+          aria-pressed={hideVideo}
+          onClick={() => setHideVideo((v) => !v)}
+        >
+          Skeleton only
+        </button>
+        <button
+          type="button"
+          className={compareMode ? "toggle selected" : "toggle"}
+          aria-pressed={compareMode}
+          disabled={referenceStatus === "unavailable"}
+          title={
+            referenceStatus === "unavailable"
+              ? "Add a matching-view reference swing to your library to compare"
+              : undefined
+          }
+          onClick={() => setCompareMode((v) => !v)}
+        >
+          Compare
+        </button>
+        <button
+          type="button"
+          className={activeDetector === "yolo" ? "toggle selected" : "toggle"}
+          aria-pressed={activeDetector === "yolo"}
+          disabled={!yoloAvailable}
+          title={
+            yoloAvailable
+              ? "Switch the club tracer between the Hough-line and YOLO detectors"
+              : "This swing has no YOLO clubhead detections — train and install backend/app/models/clubhead.pt"
+          }
+          onClick={() => setClubDetector((d) => (d === "yolo" ? "hough" : "yolo"))}
+        >
+          Club: {activeDetector === "yolo" ? "YOLO" : "Hough"}
+        </button>
+      </div>
+
       <p className="hint">Space: play/pause · ← →: step one frame</p>
       <button type="button" className="reset" onClick={onReset}>
         Analyze another video
       </button>
     </div>
   );
+}
+
+const ICON_PROPS = {
+  viewBox: "0 0 24 24",
+  width: 18,
+  height: 18,
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: 2,
+  strokeLinecap: "round" as const,
+  strokeLinejoin: "round" as const,
+  "aria-hidden": true,
+};
+
+function PencilIcon() {
+  return (
+    <svg {...ICON_PROPS}>
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </svg>
+  );
+}
+
+function PenIcon() {
+  return (
+    <svg {...ICON_PROPS}>
+      <path d="M4 20c2-6 4-10 6-12" />
+      <path d="M10 8l3-3 3 3-3 3z" />
+      <path d="M17 4l3 3" />
+    </svg>
+  );
+}
+
+function LineIcon() {
+  return (
+    <svg {...ICON_PROPS}>
+      <line x1="5" y1="19" x2="19" y2="5" />
+    </svg>
+  );
+}
+
+function ArrowIcon() {
+  return (
+    <svg {...ICON_PROPS}>
+      <line x1="5" y1="19" x2="19" y2="5" />
+      <polyline points="9 5 19 5 19 15" />
+    </svg>
+  );
+}
+
+function CircleToolIcon() {
+  return (
+    <svg {...ICON_PROPS}>
+      <circle cx="12" cy="12" r="8" />
+    </svg>
+  );
+}
+
+function UndoIcon() {
+  return (
+    <svg {...ICON_PROPS}>
+      <path d="M9 14 4 9l5-5" />
+      <path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" />
+    </svg>
+  );
+}
+
+function ClearIcon() {
+  return (
+    <svg {...ICON_PROPS}>
+      <path d="M3 6h18" />
+      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+    </svg>
+  );
+}
+
+function ToolIcon({ tool }: { tool: AnnotationTool }) {
+  switch (tool) {
+    case "pen":
+      return <PenIcon />;
+    case "line":
+      return <LineIcon />;
+    case "arrow":
+      return <ArrowIcon />;
+    case "circle":
+      return <CircleToolIcon />;
+  }
 }
 
 function TempoRow({ label, segment }: { label: string; segment: TempoSegment | null }) {
