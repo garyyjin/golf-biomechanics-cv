@@ -106,13 +106,26 @@ function argmax(series: (number | null)[], from: number, to: number): number | n
  * this instead looks for the LATEST run of consecutive frames where
  * (already smoothed, denoised) hand height barely moves frame-to-frame,
  * long enough to count as a real hold rather than a momentary pause, and
- * lands on that run's last frame. Bounded by ADDRESS_SETTLE_SECONDS so a
- * genuinely fast takeaway can't be swallowed by the search.
+ * lands on that run's last frame.
+ *
+ * `upperBoundExclusive` must be the already-detected top of the backswing
+ * (found using the unrefined, frame-0 address) — a real takeaway is often
+ * slow and gentle at first, so bounding only by elapsed time isn't enough
+ * to stop this from mistaking the start of a gradual backswing for
+ * continued stillness and swallowing it into "address," which cascades
+ * into top/downswing/impact/follow-through all coming back null.
  */
-function refineAddressIndex(smoothed: (number | null)[], bootstrapIndex: number, fps: number): number {
-  const windowEnd = Math.min(smoothed.length - 1, bootstrapIndex + Math.round(fps * ADDRESS_SETTLE_SECONDS));
-  const minHoldFrames = Math.max(3, Math.round(fps * ADDRESS_MIN_HOLD_SECONDS));
+function refineAddressIndex(
+  smoothed: (number | null)[],
+  bootstrapIndex: number,
+  upperBoundExclusive: number,
+  fps: number,
+): number {
+  const timeWindowEnd = bootstrapIndex + Math.round(fps * ADDRESS_SETTLE_SECONDS);
+  const windowEnd = Math.min(upperBoundExclusive - 1, timeWindowEnd, smoothed.length - 1);
+  if (windowEnd <= bootstrapIndex) return bootstrapIndex;
 
+  const minHoldFrames = Math.max(3, Math.round(fps * ADDRESS_MIN_HOLD_SECONDS));
   let runStart: number | null = null;
   let chosenEnd: number | null = null;
   for (let i = bootstrapIndex + 1; i <= windowEnd; i++) {
@@ -163,7 +176,6 @@ export function detectPhases(frames: PoseFrame[], handedness: Handedness, fps: n
   const interpolated = interpolateGaps(raw);
   const window = Math.max(3, Math.round(fps / 6));
   const smoothed = movingAverage(interpolated, window);
-  const addressIndex = refineAddressIndex(smoothed, bootstrapAddressIndex, fps);
 
   const velocity: (number | null)[] = smoothed.map((_, i) => {
     if (i === 0 || i === smoothed.length - 1) return null;
@@ -174,11 +186,24 @@ export function detectPhases(frames: PoseFrame[], handedness: Handedness, fps: n
   });
 
   const downswingIndex = argmax(velocity, 0, velocity.length - 1);
-  if (downswingIndex === null) return { ...empty, address: addressIndex };
+  if (downswingIndex === null) return { ...empty, address: bootstrapAddressIndex };
 
-  const topIndex = argmin(smoothed, addressIndex, downswingIndex);
-  if (topIndex === null) return { ...empty, address: addressIndex };
+  // Top must be found with the unrefined address first — it's the safe
+  // upper bound the address refinement below needs so it can never wander
+  // into the actual backswing.
+  const bootstrapTopIndex = argmin(smoothed, bootstrapAddressIndex, downswingIndex);
+  if (bootstrapTopIndex === null) return { ...empty, address: bootstrapAddressIndex };
 
+  const bootstrapRise = (smoothed[bootstrapAddressIndex] ?? 0) - (smoothed[bootstrapTopIndex] ?? 0);
+  if (bootstrapRise < MIN_RISE) return { ...empty, address: bootstrapAddressIndex };
+
+  const addressIndex = refineAddressIndex(smoothed, bootstrapAddressIndex, bootstrapTopIndex, fps);
+
+  // Re-derived off the refined address; top itself can't have moved (it's
+  // still inside [addressIndex, downswingIndex] since refinement stopped
+  // strictly before it), but the rise it's measured against can shift a
+  // little if settling changed the address hand height.
+  const topIndex = argmin(smoothed, addressIndex, downswingIndex) ?? bootstrapTopIndex;
   const rise = (smoothed[addressIndex] ?? 0) - (smoothed[topIndex] ?? 0);
   if (rise < MIN_RISE) return { ...empty, address: addressIndex };
 
