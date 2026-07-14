@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { analyzeVideo } from "./api";
+import { analyzeVideo, pollAnalysisJob } from "./api";
 import { FileField } from "./FileField";
 import type { AnalysisResponse, Handedness, Quality, View } from "./types";
 
@@ -30,6 +30,7 @@ export function UploadScreen({ onAnalyzed }: Props) {
   const [processing, setProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [jobId, setJobId] = useState<string | null>(null);
 
   const ready =
     file !== null && view !== null && handedness !== null && quality !== null && !processing;
@@ -39,8 +40,25 @@ export function UploadScreen({ onAnalyzed }: Props) {
     setProcessing(true);
     setProgress(0);
     setError(null);
+    setJobId(null);
     try {
-      const analysis = await analyzeVideo(file, view, handedness, quality, setProgress);
+      const analysis = await analyzeVideo(file, view, handedness, quality, setProgress, setJobId);
+      onAnalyzed(file, analysis);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Analysis failed");
+      setProcessing(false);
+    }
+  }
+
+  /** Resumes tracking the same job — used after a poll failure so a dropped
+   * connection doesn't force re-uploading a video that's already most of
+   * the way through server-side processing. */
+  async function retry() {
+    if (!file || !jobId) return;
+    setProcessing(true);
+    setError(null);
+    try {
+      const analysis = await pollAnalysisJob(jobId, setProgress);
       onAnalyzed(file, analysis);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Analysis failed");
@@ -60,7 +78,10 @@ export function UploadScreen({ onAnalyzed }: Props) {
         file={file}
         accept=".mp4,.mov,.webm,video/mp4,video/quicktime,video/webm"
         disabled={processing}
-        onChange={setFile}
+        onChange={(f) => {
+          setFile(f);
+          setJobId(null);
+        }}
       />
 
       <div className="field">
@@ -129,7 +150,16 @@ export function UploadScreen({ onAnalyzed }: Props) {
           <p className="hint">Extracting pose landmarks — this can take a moment.</p>
         </>
       )}
-      {error && <p className="error">{error}</p>}
+      {error && (
+        <div className="error-row">
+          <p className="error">{error}</p>
+          {jobId && (
+            <button type="button" className="reset retry-button" onClick={retry}>
+              Retry
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

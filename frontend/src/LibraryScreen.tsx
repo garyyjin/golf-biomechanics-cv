@@ -45,6 +45,38 @@ function VideoIcon() {
   );
 }
 
+const SKELETON_KEYS = ["a", "b", "c"];
+
+function LibrarySkeleton({ mode }: { mode: LibraryViewMode }) {
+  if (mode === "grid") {
+    return (
+      <div className="library-grid" aria-hidden="true">
+        {SKELETON_KEYS.map((key) => (
+          <div key={key} className="library-tile skeleton">
+            <span className="skeleton-block skeleton-icon" />
+            <span className="skeleton-block skeleton-line" />
+          </div>
+        ))}
+      </div>
+    );
+  }
+  return (
+    <div className="library-list" aria-hidden="true">
+      {SKELETON_KEYS.map((key) => (
+        <div key={key} className="library-entry skeleton">
+          <span className="skeleton-block skeleton-thumb" />
+          <div className="library-entry-meta">
+            <span className="skeleton-block skeleton-line skeleton-line-wide" />
+            <span className="skeleton-block skeleton-line skeleton-line-narrow" />
+            <span className="skeleton-block skeleton-line skeleton-line-narrow" />
+          </div>
+          <span className="skeleton-block skeleton-button" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function LibraryScreen({ onBenchmarksChanged }: Props) {
   const [entries, setEntries] = useState<LibraryEntry[]>([]);
   const [loadingList, setLoadingList] = useState(true);
@@ -56,6 +88,7 @@ export function LibraryScreen({ onBenchmarksChanged }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [libraryViewMode, setLibraryViewMode] = useState<LibraryViewMode>("list");
   const [selectedEntry, setSelectedEntry] = useState<LibraryEntry | null>(null);
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [filterView, setFilterView] = useState<View | "all">("all");
   const [filterHandedness, setFilterHandedness] = useState<Handedness | "all">("all");
@@ -98,6 +131,7 @@ export function LibraryScreen({ onBenchmarksChanged }: Props) {
   }
 
   async function handleDelete(id: string) {
+    setConfirmingId(null);
     setDeletingId(id);
     setError(null);
     try {
@@ -241,7 +275,7 @@ export function LibraryScreen({ onBenchmarksChanged }: Props) {
       </div>
 
       {loadingList ? (
-        <p>Loading…</p>
+        <LibrarySkeleton mode={libraryViewMode} />
       ) : entries.length === 0 ? (
         <p className="hint">No reference swings yet.</p>
       ) : filteredEntries.length === 0 ? (
@@ -275,14 +309,26 @@ export function LibraryScreen({ onBenchmarksChanged }: Props) {
                 <span>{entry.handedness === "right" ? "Right-handed" : "Left-handed"}</span>
                 <span>{new Date(entry.createdAt).toLocaleDateString()}</span>
               </div>
-              <button
-                type="button"
-                className="reset"
-                disabled={deletingId === entry.id}
-                onClick={() => handleDelete(entry.id)}
-              >
-                {deletingId === entry.id ? "Removing…" : "Remove"}
-              </button>
+              {confirmingId === entry.id ? (
+                <div className="confirm-actions">
+                  <span className="confirm-label">Remove this swing?</span>
+                  <button
+                    type="button"
+                    className="reset danger"
+                    disabled={deletingId === entry.id}
+                    onClick={() => handleDelete(entry.id)}
+                  >
+                    {deletingId === entry.id ? "Removing…" : "Confirm"}
+                  </button>
+                  <button type="button" onClick={() => setConfirmingId(null)}>
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button type="button" className="reset" onClick={() => setConfirmingId(entry.id)}>
+                  Remove
+                </button>
+              )}
             </div>
           ))}
         </div>
@@ -305,7 +351,13 @@ export function LibraryScreen({ onBenchmarksChanged }: Props) {
       )}
 
       {selectedEntry && (
-        <div className="modal-backdrop" onClick={() => setSelectedEntry(null)}>
+        <div
+          className="modal-backdrop"
+          onClick={() => {
+            setSelectedEntry(null);
+            setConfirmingId(null);
+          }}
+        >
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <video controls src={referenceSwingVideoUrl(selectedEntry.id)} />
             <div className="library-entry-meta">
@@ -314,22 +366,40 @@ export function LibraryScreen({ onBenchmarksChanged }: Props) {
               <span>{selectedEntry.handedness === "right" ? "Right-handed" : "Left-handed"}</span>
               <span>{new Date(selectedEntry.createdAt).toLocaleDateString()}</span>
             </div>
-            <div className="modal-actions">
-              <button
-                type="button"
-                className="reset"
-                disabled={deletingId === selectedEntry.id}
-                onClick={() => {
-                  void handleDelete(selectedEntry.id);
-                  setSelectedEntry(null);
-                }}
-              >
-                {deletingId === selectedEntry.id ? "Removing…" : "Remove"}
-              </button>
-              <button type="button" onClick={() => setSelectedEntry(null)}>
-                Close
-              </button>
-            </div>
+            {confirmingId === selectedEntry.id ? (
+              <div className="confirm-actions">
+                <span className="confirm-label">Remove this swing?</span>
+                <button
+                  type="button"
+                  className="reset danger"
+                  disabled={deletingId === selectedEntry.id}
+                  onClick={() => {
+                    void handleDelete(selectedEntry.id);
+                    setSelectedEntry(null);
+                  }}
+                >
+                  {deletingId === selectedEntry.id ? "Removing…" : "Confirm"}
+                </button>
+                <button type="button" onClick={() => setConfirmingId(null)}>
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <div className="modal-actions">
+                <button type="button" className="reset" onClick={() => setConfirmingId(selectedEntry.id)}>
+                  Remove
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedEntry(null);
+                    setConfirmingId(null);
+                  }}
+                >
+                  Close
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
