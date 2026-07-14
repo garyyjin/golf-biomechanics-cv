@@ -649,6 +649,96 @@ button:disabled {
   overflow-y: auto;
 }
 
+/* Swing score ------------------------------------------------------------ */
+
+.swing-score-card {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem;
+  background: var(--color-surface-alt);
+  border: 1.5px solid var(--color-hairline);
+  border-radius: var(--radius-cards);
+}
+
+/* Each band sets `color`, which the progress ring's stroke and the band
+   label both pick up via currentColor/inheritance instead of repeating the
+   same red/yellow/green mapping in three more rules. */
+.swing-score-good {
+  color: var(--color-secondary);
+}
+
+.swing-score-fair {
+  color: var(--color-warning);
+}
+
+.swing-score-poor {
+  color: var(--color-ember);
+}
+
+.swing-score-unscored {
+  color: var(--color-mid-gray);
+}
+
+.swing-score-ring {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.swing-score-ring svg {
+  position: absolute;
+  inset: 0;
+}
+
+.swing-score-track {
+  stroke: var(--color-hairline-strong);
+}
+
+.swing-score-progress {
+  stroke: currentColor;
+  transition: stroke-dashoffset 0.4s ease;
+}
+
+.swing-score-number {
+  position: relative;
+  font-family: var(--font-mono);
+  font-size: 1.7rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-ink);
+}
+
+.swing-score-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.swing-score-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--color-mid-gray);
+}
+
+.swing-score-band {
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.swing-score-caption {
+  margin: 0.1rem 0 0;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: var(--color-ink-soft);
+}
+
 .readout-panel {
   font-size: 0.8rem;
   display: flex;
