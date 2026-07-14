@@ -35,8 +35,40 @@
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.25);
 }
 
+:root[data-theme="light"] {
+  --color-secondary: #2fae57;
+  --color-secondary-hover: #3fc468;
+  --color-secondary-press: #24943f;
+  --color-on-secondary: #f3f6f0;
+
+  --color-tertiary: #e4e8dd;
+  --color-neutral: #e4e8dd;
+  --color-surface: #e9ece2;
+  --color-accent: rgba(47, 174, 87, 0.1);
+  --color-table: #eef1e8;
+
+  --color-canvas: #f7f8f3;
+  --color-paper: #ffffff;
+  --color-surface-alt: var(--color-table);
+  --color-surface-3: #e4e7dc;
+  --color-ink: #1a1f15;
+  --color-ink-soft: #4d5443;
+  --color-mid-gray: #6d7565;
+  --color-hairline: #dde1d4;
+  --color-hairline-strong: #c4cab8;
+  --color-ember: #d9432f;
+  --color-warning: #b5750f;
+
+  --shadow-card: 0 1px 2px rgba(20, 24, 14, 0.06), 0 8px 24px rgba(20, 24, 14, 0.08);
+}
+
 * {
   box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
 }
 
 body {
@@ -46,15 +78,55 @@ body {
   color: var(--color-ink);
   font-size: 14px;
   line-height: 1.43;
+  /* The app shell (nav + one active screen) fills the viewport; each screen
+     owns its own scroll region instead of the whole page scrolling. */
+  overflow: hidden;
 }
 
 #root {
   width: 100%;
+  height: 100vh;
   margin: 0 auto;
   padding: 2.5rem clamp(1.5rem, 4vw, 4rem);
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+/* Scrollbars ------------------------------------------------------------ */
+
+.side-panel,
+.library,
+.upload {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-hairline-strong) transparent;
+}
+
+.side-panel::-webkit-scrollbar,
+.library::-webkit-scrollbar,
+.upload::-webkit-scrollbar {
+  width: 8px;
+}
+
+.side-panel::-webkit-scrollbar-track,
+.library::-webkit-scrollbar-track,
+.upload::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.side-panel::-webkit-scrollbar-thumb,
+.library::-webkit-scrollbar-thumb,
+.upload::-webkit-scrollbar-thumb {
+  background-color: var(--color-hairline-strong);
+  border-radius: var(--radius-pill);
+}
+
+.side-panel::-webkit-scrollbar-thumb:hover,
+.library::-webkit-scrollbar-thumb:hover,
+.upload::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-mid-gray);
 }
 
 h1 {
@@ -77,6 +149,7 @@ h3 {
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
+  flex: none;
 }
 
 .brand {
@@ -101,6 +174,17 @@ h3 {
   align-self: flex-start;
 }
 
+.top-nav-right {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.theme-toggle {
+  width: 36px;
+  height: 36px;
+}
+
 /* Cards ----------------------------------------------------------------- */
 
 .upload,
@@ -121,6 +205,9 @@ h3 {
   gap: 1.25rem;
   max-width: 420px;
   margin: 4vh auto 0;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .upload-subhead {
@@ -362,35 +449,73 @@ button:disabled {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .player-main {
   display: flex;
-  gap: 1.25rem;
-  align-items: flex-start;
+  gap: 0.5rem;
   justify-content: center;
   width: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Drag to resize the side panel — the gap on either side is the hit-area
+   padding; only the centered line is drawn. */
+.resize-handle {
+  flex: none;
+  width: 12px;
+  align-self: stretch;
+  cursor: col-resize;
+  position: relative;
+  touch-action: none;
+}
+
+.resize-handle::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
+  background: var(--color-hairline);
+  border-radius: var(--radius-pill);
+  transition: background-color 0.15s ease;
+}
+
+.resize-handle:hover::after,
+.resize-handle.dragging::after {
+  background: var(--color-secondary);
 }
 
 .video-column {
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 0.75rem;
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   min-width: 0;
-}
-
-.video-column .controls {
-  width: 100%;
+  min-height: 0;
 }
 
 .player-main .video-box {
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   min-width: 0;
-  height: min(70vh, 640px);
+  min-height: 0;
   width: auto;
+  height: auto;
   max-width: 100%;
+  max-height: 100%;
+  /* Flex items stretch to fill the cross axis by default, which overrides
+     aspect-ratio sizing entirely once the item's own dimensions are "auto"
+     — center opts back into aspect-ratio-derived (letterboxed) sizing. */
+  align-self: center;
 }
 
 /* Compare mode: two videos side by side, phase-synced. */
@@ -408,28 +533,55 @@ button:disabled {
   display: flex;
   gap: 0.75rem;
   width: 100%;
-  align-items: flex-start;
+  flex: 1 1 auto;
+  min-height: 0;
+  align-items: stretch;
   justify-content: center;
 }
 
-/* Each slot's ideal width is its video's natural size at the single-video
-   height (aspect-ratio sets the box height), shrinking evenly when the row
-   is too narrow — so the two videos sit directly next to each other instead
-   of centering in stretched half-row slots. */
+/* Single-video mode: fill whatever space video-column actually has (which
+   reflects the real, dynamic chrome around it — nav, bottom playback bar,
+   side panel — not a guessed viewport fraction). The video-box inside then
+   letterboxes itself via aspect-ratio. */
 .video-slot {
-  flex: 0 1 calc(min(70vh, 640px) * var(--video-aspect, 0.6));
+  flex: 1 1 auto;
   min-width: 0;
+  min-height: 0;
+  max-width: 100%;
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
 }
 
+/* Compare mode: both slots' widths are set explicitly (inline, from
+   compareRowHeight in PlayerScreen.tsx) once mounted, derived from ONE
+   shared row-height measurement so the two videos always resolve to the
+   same height. flex: 0 1 auto is just the fit-content fallback for the
+   first paint, before that measurement lands. */
+.video-pair .video-slot {
+  flex: 0 1 auto;
+  width: auto;
+  height: 100%;
+  min-height: 0;
+  max-width: 100%;
+}
+
+.video-pair .video-slot-primary {
+  min-width: 0;
+}
+
+/* Fixed (not min-) height: the two slots' headers hold different content —
+   a plain text label on the primary side, buttons + a dropdown on the
+   reference side — and letting either grow to fit its own content would
+   leave less room for one slot's video-box than the other's, breaking the
+   equal-height alignment compareRowHeight (PlayerScreen.tsx) computes for. */
 .video-slot-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
-  min-height: 1.6rem;
+  height: 34px;
+  flex: none;
 }
 
 .video-slot-label {
@@ -472,15 +624,6 @@ button:disabled {
   margin: 0;
 }
 
-/* Width-driven sizing (the single-video height rule can't fit two boxes);
-   the box fills its slot and the inline aspect-ratio sets the height.
-   Constrain by width only — a max-height on an aspect-ratio box would
-   desync the overlay canvas. */
-.player-main .video-pair .video-box {
-  height: auto;
-  width: 100%;
-}
-
 .video-placeholder {
   display: flex;
   align-items: center;
@@ -501,7 +644,8 @@ button:disabled {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
-  height: min(70vh, 640px);
+  height: 100%;
+  min-height: 0;
   overflow-y: auto;
 }
 
@@ -579,12 +723,151 @@ button:disabled {
   pointer-events: none;
 }
 
+/* Annotations --------------------------------------------------------- */
+
+/* Row: the tool sidebar plus the video, side by side — so opening the
+   sidebar never overlaps or shrinks the video itself, it just claims its
+   own reserved column to the left. */
+.video-stage {
+  display: flex;
+  gap: 0.5rem;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+}
+
+/* Fills the space next to the sidebar exactly (no aspect-ratio of its own),
+   so it can be measured reliably in JS; video-box is then given an exact
+   pixel size fit within it — see the comment at videoBoxSize in
+   PlayerScreen.tsx for why this isn't done with CSS aspect-ratio here. */
+.video-frame {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.video-frame .video-box {
+  flex: none;
+}
+
+.annotation-sidebar {
+  flex: none;
+  width: 58px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 6px;
+  /* No overflow-y: auto here — that forces overflow-x to also compute as
+     non-visible (CSS can't mix visible with non-visible on perpendicular
+     axes), which showed a native horizontal scrollbar the moment anything
+     (e.g. the swatch ring) came within a sub-pixel of the sidebar's edge. */
+  overflow: visible;
+}
+
+.annotation-tool-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.icon-button {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+
+.icon-button.selected {
+  background: var(--color-ink);
+  color: var(--color-canvas);
+  border-color: var(--color-ink);
+}
+
+.annotation-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  touch-action: none;
+}
+
+.annotation-canvas.active {
+  pointer-events: auto;
+  cursor: crosshair;
+}
+
+.annotation-swatches {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  justify-items: center;
+  gap: 6px;
+  padding: 2px 0;
+}
+
+.annotation-swatch {
+  width: 18px;
+  height: 18px;
+  min-width: 0;
+  padding: 0;
+  border-radius: 5px;
+  border: 1.5px solid var(--color-hairline-strong);
+  cursor: pointer;
+}
+
+.annotation-swatch.selected {
+  border-color: var(--color-ink);
+  box-shadow: 0 0 0 2px var(--color-canvas), 0 0 0 4px var(--color-ink);
+}
+
+/* Drag to resize the bottom playback bar's height. */
+.controls-resize-handle {
+  flex: none;
+  height: 12px;
+  width: 100%;
+  cursor: row-resize;
+  position: relative;
+  touch-action: none;
+}
+
+.controls-resize-handle::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 2px;
+  transform: translateY(-50%);
+  background: var(--color-hairline);
+  border-radius: var(--radius-pill);
+  transition: background-color 0.15s ease;
+}
+
+.controls-resize-handle:hover::after,
+.controls-resize-handle.dragging::after {
+  background: var(--color-secondary);
+}
+
 .controls {
   display: flex;
   align-items: center;
+  align-content: center;
   flex-wrap: wrap;
   row-gap: 0.5rem;
   gap: 0.75rem;
+  flex: none;
+  width: 100%;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--color-hairline);
+  overflow-y: auto;
 }
 
 .speed-group {
@@ -843,9 +1126,31 @@ button:disabled {
 }
 
 @media (max-width: 800px) {
+  /* Below this width the video/panel sit stacked rather than side-by-side —
+     there's no longer a fixed-height row to letterbox into, so the whole
+     screen scrolls as a normal document instead of the desktop app-shell
+     (fixed nav, independently-scrolling panes) layout above. */
+  body,
+  #root {
+    height: auto;
+    overflow: visible;
+  }
+
+  .player,
+  .upload,
+  .library {
+    overflow: visible;
+  }
+
   .player-main {
     flex-direction: column;
     align-items: stretch;
+    overflow: visible;
+  }
+
+  .resize-handle,
+  .controls-resize-handle {
+    display: none;
   }
 
   .video-column {
@@ -858,6 +1163,22 @@ button:disabled {
     height: auto;
   }
 
+  /* The tool sidebar sits above the video instead of squeezing it
+     horizontally when there's not much width to spare. */
+  .video-stage {
+    flex-direction: column;
+  }
+
+  .annotation-sidebar {
+    width: 100%;
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .annotation-tool-group {
+    flex-direction: row;
+  }
+
   .video-pair {
     flex-direction: column;
   }
@@ -865,6 +1186,7 @@ button:disabled {
   /* In the stacked column, flex-basis would govern height, not width. */
   .video-slot {
     flex-basis: auto;
+    width: 100%;
   }
 
   .side-panel {
@@ -887,6 +1209,9 @@ button:disabled {
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .library-upload {
