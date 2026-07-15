@@ -2,8 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ANNOTATION_COLORS, ANNOTATION_TOOLS, useAnnotations } from "./annotations";
 import type { AnnotationTool } from "./annotations";
 import type { BenchmarkTable } from "./benchmarks";
-import { fillClubGaps, hasClubTrack } from "./club";
-import type { ClubDetector } from "./club";
 import {
   anchorTimePairs,
   buildNaturalSync,
@@ -85,7 +83,6 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
   const [naturalSpeed, setNaturalSpeed] = useState(false);
   const [showTempo, setShowTempo] = useState(false);
   const [masterEnded, setMasterEnded] = useState(false);
-  const [clubDetector, setClubDetector] = useState<ClubDetector>("hough");
 
   // Compare mode: both slots must resolve to the exact same height, or the
   // two swings visibly don't line up. Deriving each slot's width from its
@@ -256,12 +253,6 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
     [frames, handedness, aspect],
   );
 
-  // YOLO clubhead detections, with short misses bridged. Empty of detections
-  // when the analysis came from a backend with no clubhead.pt installed —
-  // that's what disables the YOLO detector option below.
-  const clubTrack = useMemo(() => fillClubGaps(frames), [frames]);
-  const yoloAvailable = useMemo(() => hasClubTrack(clubTrack), [clubTrack]);
-
   const feedback = useMemo(() => computeFeedback(analysis, benchmarks), [analysis, benchmarks]);
   const swingScore = useMemo(() => computeSwingScore(feedback), [feedback]);
 
@@ -280,16 +271,6 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
     [fps, frame_count],
   );
 
-  // A "yolo" selection carried over from a previous video that did have
-  // detections would otherwise leave this one with no tracer at all.
-  const activeDetector: ClubDetector = yoloAvailable ? clubDetector : "hough";
-
-  // The trail is a rolling window of the last 18 points; without this it would
-  // splice the old detector's points onto the new one's for a beat after a switch.
-  useEffect(() => {
-    rendererStateRef.current.clubTrail = [];
-  }, [activeDetector]);
-
   const drawAt = useCallback(
     (mediaTime: number) => {
       const canvas = canvasRef.current;
@@ -307,12 +288,10 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
         aspect,
         addressRefs,
         rendererStateRef.current,
-        activeDetector,
-        clubTrack,
       );
       setLines(overlay);
     },
-    [frames, frameIndexAt, view, handedness, aspect, addressRefs, activeDetector, clubTrack],
+    [frames, frameIndexAt, view, handedness, aspect, addressRefs],
   );
 
   // requestVideoFrameCallback loop: draws whenever the video presents a frame
@@ -707,10 +686,6 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
                 </span>
               </div>
             ))}
-            <div className="readout-row">
-              <span className="swatch" style={{ background: "rgb(255, 199, 44)" }} />
-              <span>Club (detected, or approx. when unclear)</span>
-            </div>
             {view === "down_the_line" && (
               <p className="readout-note">
                 Plane is a body-only approximation — most accurate with the camera aligned to
@@ -801,20 +776,6 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
           onClick={() => setCompareMode((v) => !v)}
         >
           Compare
-        </button>
-        <button
-          type="button"
-          className={activeDetector === "yolo" ? "toggle selected" : "toggle"}
-          aria-pressed={activeDetector === "yolo"}
-          disabled={!yoloAvailable}
-          title={
-            yoloAvailable
-              ? "Switch the club tracer between the Hough-line and YOLO detectors"
-              : "This swing has no YOLO clubhead detections — train and install backend/app/models/clubhead.pt"
-          }
-          onClick={() => setClubDetector((d) => (d === "yolo" ? "hough" : "yolo"))}
-        >
-          Club: {activeDetector === "yolo" ? "YOLO" : "Hough"}
         </button>
       </div>
 
