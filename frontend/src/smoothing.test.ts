@@ -56,8 +56,16 @@ describe("PointSmoother", () => {
     const smoother = new PointSmoother();
     smoother.apply({ x: 0, y: 0 }, 0);
     const result = smoother.apply({ x: 1, y: 1 }, 1);
-    expect(result!.x).toBeCloseTo(0.4);
-    expect(result!.y).toBeCloseTo(0.4);
+    expect(result!.x).toBeCloseTo(0.65);
+    expect(result!.y).toBeCloseTo(0.65);
+  });
+
+  it("accepts a custom alpha", () => {
+    const smoother = new PointSmoother(0.5);
+    smoother.apply({ x: 0, y: 0 }, 0);
+    const result = smoother.apply({ x: 1, y: 1 }, 1);
+    expect(result!.x).toBeCloseTo(0.5);
+    expect(result!.y).toBeCloseTo(0.5);
   });
 
   it("resets on a null point", () => {

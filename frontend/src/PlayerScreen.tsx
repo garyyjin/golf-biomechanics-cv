@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ANNOTATION_COLORS, ANNOTATION_TOOLS, useAnnotations } from "./annotations";
 import type { AnnotationTool } from "./annotations";
 import type { BenchmarkTable } from "./benchmarks";
+import { fillClubGaps, hasClubTrack } from "./club";
 import {
   anchorTimePairs,
   buildNaturalSync,
@@ -10,7 +11,7 @@ import {
   sharedPhaseAnchors,
 } from "./comparison";
 import type { ReferenceSwing, SyncPlan } from "./comparison";
-import { LINE_COLORS } from "./draw";
+import { CLUB_TRACER_COLOR, LINE_COLORS } from "./draw";
 import { FeedbackPanel } from "./FeedbackPanel";
 import type { ReferenceStatus } from "./FeedbackPanel";
 import { computeFeedback } from "./feedback";
@@ -83,6 +84,7 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
   const [naturalSpeed, setNaturalSpeed] = useState(false);
   const [showTempo, setShowTempo] = useState(false);
   const [masterEnded, setMasterEnded] = useState(false);
+  const [showSkeleton, setShowSkeleton] = useState(true);
 
   // Compare mode: both slots must resolve to the exact same height, or the
   // two swings visibly don't line up. Deriving each slot's width from its
@@ -253,6 +255,12 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
     [frames, handedness, aspect],
   );
 
+  // YOLO clubhead detections, with short misses bridged. Empty of detections
+  // when the analysis came from a backend with no clubhead.pt installed --
+  // that's when the tracer doesn't render at all (see clubTracer below).
+  const clubTrack = useMemo(() => fillClubGaps(frames), [frames]);
+  const yoloAvailable = useMemo(() => hasClubTrack(clubTrack), [clubTrack]);
+
   const feedback = useMemo(() => computeFeedback(analysis, benchmarks), [analysis, benchmarks]);
   const swingScore = useMemo(() => computeSwingScore(feedback), [feedback]);
 
@@ -288,10 +296,25 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
         aspect,
         addressRefs,
         rendererStateRef.current,
+        yoloAvailable
+          ? { yoloTrack: clubTrack, topIndex: feedback.phases.top, impactIndex: feedback.phases.impact }
+          : undefined,
+        showSkeleton,
       );
       setLines(overlay);
     },
-    [frames, frameIndexAt, view, handedness, aspect, addressRefs],
+    [
+      frames,
+      frameIndexAt,
+      view,
+      handedness,
+      aspect,
+      addressRefs,
+      yoloAvailable,
+      clubTrack,
+      feedback.phases,
+      showSkeleton,
+    ],
   );
 
   // requestVideoFrameCallback loop: draws whenever the video presents a frame
@@ -686,6 +709,12 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
                 </span>
               </div>
             ))}
+            {yoloAvailable && (
+              <div className="readout-row">
+                <span className="swatch" style={{ background: `rgb(${CLUB_TRACER_COLOR.join(", ")})` }} />
+                <span>Club path (red: backswing, green: downswing)</span>
+              </div>
+            )}
             {view === "down_the_line" && (
               <p className="readout-note">
                 Plane is a body-only approximation — most accurate with the camera aligned to
@@ -762,6 +791,15 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
           onClick={() => setHideVideo((v) => !v)}
         >
           Skeleton only
+        </button>
+        <button
+          type="button"
+          className={showSkeleton ? "toggle selected" : "toggle"}
+          aria-pressed={showSkeleton}
+          title="Show or hide the pose skeleton (bones and joints) overlay"
+          onClick={() => setShowSkeleton((v) => !v)}
+        >
+          Skeleton
         </button>
         <button
           type="button"

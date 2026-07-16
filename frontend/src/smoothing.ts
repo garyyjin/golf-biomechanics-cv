@@ -1,6 +1,13 @@
 import type { Landmark } from "./types";
 
 const ALPHA = 0.4; // weight of the incoming frame at full visibility
+// A clubhead can cross a big chunk of the frame between two consecutive
+// frames during the downswing, so the point itself needs to track that
+// closely (low alpha here reads as the tracer lagging behind the real
+// clubhead, not as smoothness) — only mild damping of single-frame jitter,
+// not lag. The longer, slow-fading look comes from the trail length in
+// overlayRenderer.ts, not from delaying this point.
+const POINT_ALPHA = 0.65;
 // Landmarks poorly seen (self-occlusion from body turn, edge-of-frame,
 // club/body occlusion) tend to have low MediaPipe visibility; scaling alpha
 // by visibility trusts noisy low-confidence samples less. The 0.1 floor
@@ -68,6 +75,11 @@ export class LandmarkSmoother {
 export class PointSmoother {
   private previous: { x: number; y: number } | null = null;
   private previousIndex = -1;
+  private readonly alpha: number;
+
+  constructor(alpha: number = POINT_ALPHA) {
+    this.alpha = alpha;
+  }
 
   apply(point: { x: number; y: number } | null, frameIndex: number): { x: number; y: number } | null {
     if (point === null) {
@@ -87,8 +99,8 @@ export class PointSmoother {
     } else {
       const prev = this.previous!;
       result = {
-        x: prev.x + ALPHA * (point.x - prev.x),
-        y: prev.y + ALPHA * (point.y - prev.y),
+        x: prev.x + this.alpha * (point.x - prev.x),
+        y: prev.y + this.alpha * (point.y - prev.y),
       };
     }
 

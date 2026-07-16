@@ -40,11 +40,17 @@ def download_dataset(api_key: str) -> Path:
     return Path(dataset.location)
 
 
-def train(data_yaml: Path, epochs: int) -> Path:
+def train(data_yaml: Path, epochs: int, batch: int, patience: int) -> Path:
     from ultralytics import YOLO
 
     model = YOLO("yolov8n.pt")
-    results = model.train(data=str(data_yaml), epochs=epochs, imgsz=640)
+    # batch=-1 (AutoBatch) picks the largest batch size that fits the GPU's
+    # memory instead of a small fixed default — the single biggest lever for
+    # wall-clock speed on a GPU this model doesn't otherwise saturate.
+    # patience stops training early once validation stops improving; best.pt
+    # (what actually gets used) is checkpointed continuously regardless of
+    # when training stops, so this only cuts wasted time, not quality.
+    results = model.train(data=str(data_yaml), epochs=epochs, imgsz=640, batch=batch, patience=patience)
     return Path(results.save_dir) / "weights" / "best.pt"
 
 
@@ -52,10 +58,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--api-key", required=True, help="Roboflow API key")
     parser.add_argument("--epochs", type=int, default=50)
+    parser.add_argument("--batch", type=int, default=-1, help="-1 for Ultralytics AutoBatch")
+    parser.add_argument("--patience", type=int, default=15, help="early-stop after N epochs with no improvement")
     args = parser.parse_args()
 
     dataset_dir = download_dataset(args.api_key)
-    best_weights = train(dataset_dir / "data.yaml", args.epochs)
+    best_weights = train(dataset_dir / "data.yaml", args.epochs, args.batch, args.patience)
 
     MODEL_DEST.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(best_weights, MODEL_DEST)

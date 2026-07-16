@@ -14,6 +14,25 @@ def clear_model_cache():
     club._load_model.cache_clear()
 
 
+class _FakeBox:
+    def __init__(self, xyxy: tuple[float, float, float, float], confidence: float):
+        self.xyxy = [np.array(xyxy, dtype=float)]
+        self.conf = [confidence]
+
+
+class _FakeResult:
+    def __init__(self, boxes: list[_FakeBox]):
+        self.boxes = boxes
+
+
+class _FakeModel:
+    def __init__(self, boxes: list[_FakeBox]):
+        self._boxes = boxes
+
+    def predict(self, frame_bgr, verbose=False):
+        return [_FakeResult(self._boxes)]
+
+
 def test_detect_club_returns_none_when_no_model_is_installed(monkeypatch, tmp_path):
     # Pointed at a path that definitely has no weights, rather than asserting
     # the real MODEL_PATH is missing — that assertion would start failing the
@@ -21,6 +40,19 @@ def test_detect_club_returns_none_when_no_model_is_installed(monkeypatch, tmp_pa
     monkeypatch.setattr(club, "MODEL_PATH", tmp_path / "clubhead.pt")
     frame = np.zeros((64, 64, 3), dtype=np.uint8)
     assert detect_club(frame) is None
+
+
+def test_detect_club_defaults_to_box_center_with_no_hand_point(monkeypatch):
+    monkeypatch.setattr(club, "_load_model", lambda: _FakeModel([_FakeBox((10, 10, 30, 30), 0.9)]))
+    frame = np.zeros((100, 100, 3), dtype=np.uint8)
+    assert detect_club(frame) == {"x": 0.2, "y": 0.2}
+
+
+def test_detect_club_returns_the_box_corner_farthest_from_the_hand(monkeypatch):
+    monkeypatch.setattr(club, "_load_model", lambda: _FakeModel([_FakeBox((10, 10, 30, 30), 0.9)]))
+    frame = np.zeros((100, 100, 3), dtype=np.uint8)
+    # Hand at the box's bottom-right corner -- the tip is the opposite corner.
+    assert detect_club(frame, hand_point=(30, 30)) == {"x": 0.1, "y": 0.1}
 
 
 @pytest.mark.skipif(
