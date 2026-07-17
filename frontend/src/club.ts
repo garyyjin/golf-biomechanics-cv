@@ -19,8 +19,13 @@ const OUTLIER_ABS_FLOOR = 0.08;
 // Genuine fast motion (e.g. through impact) is still roughly a straight
 // line frame to frame, so its detour ratio stays near 1; a false detection
 // miles off the real path (the detector locking onto the grip for a frame)
-// produces a large one.
-const OUTLIER_DETOUR_FACTOR = 2.5;
+// produces a large one. Kept fairly loose on purpose: a real direction
+// reversal -- the top of the backswing, by definition -- is also a detour
+// off the straight chord between its neighbors, especially if the detector
+// misses a few frames right around the apex. Too tight a factor here
+// rejects that real turning point as if it were a false detection and
+// interpolates a smoothed-over path that cuts the corner instead.
+const OUTLIER_DETOUR_FACTOR = 4;
 
 function distance(a: ClubPoint, b: ClubPoint): number {
   return Math.hypot(a.x - b.x, a.y - b.y);

@@ -181,8 +181,11 @@ function strokeTrailSegment(
 // is a curve anchor. Averaging over a wider neighborhood than any one frame
 // smooths those kinks out; this only affects what gets drawn; the
 // underlying trail (and the live tip position derived from it elsewhere)
-// keeps its real per-frame data.
-const TRAIL_SMOOTHING_WINDOW = 11;
+// keeps its real per-frame data. Kept fairly small on purpose: a wider
+// window also rounds off real sharp turns -- most visibly the top of the
+// backswing, an actual direction reversal -- into a softer curve that
+// undershoots how far the swing really goes back.
+const TRAIL_SMOOTHING_WINDOW = 5;
 
 /**
  * Symmetric moving average over each point's (up to) `window` nearest
