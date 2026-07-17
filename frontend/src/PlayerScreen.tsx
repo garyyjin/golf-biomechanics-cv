@@ -296,25 +296,12 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
         aspect,
         addressRefs,
         rendererStateRef.current,
-        yoloAvailable
-          ? { yoloTrack: clubTrack, topIndex: feedback.phases.top, impactIndex: feedback.phases.impact }
-          : undefined,
+        yoloAvailable ? { yoloTrack: clubTrack } : undefined,
         showSkeleton,
       );
       setLines(overlay);
     },
-    [
-      frames,
-      frameIndexAt,
-      view,
-      handedness,
-      aspect,
-      addressRefs,
-      yoloAvailable,
-      clubTrack,
-      feedback.phases,
-      showSkeleton,
-    ],
+    [frames, frameIndexAt, view, handedness, aspect, addressRefs, yoloAvailable, clubTrack, showSkeleton],
   );
 
   // requestVideoFrameCallback loop: draws whenever the video presents a frame
@@ -712,7 +699,7 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
             {yoloAvailable && (
               <div className="readout-row">
                 <span className="swatch" style={{ background: `rgb(${CLUB_TRACER_COLOR.join(", ")})` }} />
-                <span>Club path (red: backswing, green: downswing; approx. where undetected)</span>
+                <span>Club path (approx. where undetected)</span>
               </div>
             )}
             {view === "down_the_line" && (

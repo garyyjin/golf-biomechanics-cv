@@ -38,14 +38,6 @@ export interface Point {
   z?: number;
 }
 
-/** A club tracer trail point, tagged with the frame it came from so the
- * trail can be split into backswing/downswing-colored segments (see
- * draw.ts's drawClubTracer) by comparing against the top-of-backswing
- * phase's frame index. */
-export interface ClubTrailPoint extends Point {
-  frameIndex: number;
-}
-
 export interface LineResult {
   a: Point;
   b: Point;
