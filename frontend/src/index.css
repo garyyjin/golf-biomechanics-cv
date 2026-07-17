@@ -190,6 +190,7 @@ h3 {
 .upload,
 .readout-panel,
 .feedback-panel,
+.stats-panel,
 .library-upload,
 .library-entry {
   background: var(--color-paper);
@@ -1288,6 +1289,53 @@ button:disabled {
 }
 
 .feedback-caption {
+  color: var(--color-mid-gray);
+  font-size: 12px;
+  margin: 0.75rem 0 0;
+}
+
+/* Stats panel ----------------------------------------------------------------- */
+
+.stats-panel {
+  font-size: 0.85rem;
+}
+
+.stats-panel summary {
+  cursor: pointer;
+  font-weight: 600;
+  list-style: none;
+}
+
+.stats-panel summary::-webkit-details-marker {
+  display: none;
+}
+
+.stats-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  background: var(--color-surface-alt);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-nested);
+  padding: 0.5rem 0.7rem;
+  margin-top: 0.5rem;
+}
+
+.stats-label {
+  color: var(--color-mid-gray);
+  font-size: 12px;
+}
+
+.stats-value {
+  font-family: var(--font-mono);
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--color-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.stats-caption {
   color: var(--color-mid-gray);
   font-size: 12px;
   margin: 0.75rem 0 0;
