@@ -85,6 +85,7 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
   const [showTempo, setShowTempo] = useState(false);
   const [masterEnded, setMasterEnded] = useState(false);
   const [showSkeleton, setShowSkeleton] = useState(true);
+  const [showClubPath, setShowClubPath] = useState(true);
 
   // Compare mode: both slots must resolve to the exact same height, or the
   // two swings visibly don't line up. Deriving each slot's width from its
@@ -296,7 +297,7 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
         aspect,
         addressRefs,
         rendererStateRef.current,
-        yoloAvailable ? { yoloTrack: clubTrack, topIndex: feedback.phases.top } : undefined,
+        yoloAvailable && showClubPath ? { yoloTrack: clubTrack, topIndex: feedback.phases.top } : undefined,
         showSkeleton,
       );
       setLines(overlay);
@@ -309,6 +310,7 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
       aspect,
       addressRefs,
       yoloAvailable,
+      showClubPath,
       clubTrack,
       feedback.phases.top,
       showSkeleton,
@@ -707,7 +709,7 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
                 </span>
               </div>
             ))}
-            {yoloAvailable && (
+            {yoloAvailable && showClubPath && (
               <div className="readout-row">
                 <span className="swatch" style={{ background: `rgb(${CLUB_TRACER_COLOR.join(", ")})` }} />
                 <span>Club path (red: takeback, green: downswing; approx. where undetected)</span>
@@ -782,23 +784,39 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
             </button>
           ))}
         </div>
-        <button
-          type="button"
-          className={hideVideo ? "toggle selected" : "toggle"}
-          aria-pressed={hideVideo}
-          onClick={() => setHideVideo((v) => !v)}
-        >
-          Skeleton only
-        </button>
-        <button
-          type="button"
-          className={showSkeleton ? "toggle selected" : "toggle"}
-          aria-pressed={showSkeleton}
-          title="Show or hide the pose skeleton (bones and joints) overlay"
-          onClick={() => setShowSkeleton((v) => !v)}
-        >
-          Skeleton
-        </button>
+        <div className="toggle-group" aria-label="View options">
+          <button
+            type="button"
+            className={hideVideo ? "toggle selected" : "toggle"}
+            aria-pressed={hideVideo}
+            onClick={() => setHideVideo((v) => !v)}
+          >
+            Skeleton only
+          </button>
+          <button
+            type="button"
+            className={showSkeleton ? "toggle selected" : "toggle"}
+            aria-pressed={showSkeleton}
+            title="Show or hide the pose skeleton (bones and joints) overlay"
+            onClick={() => setShowSkeleton((v) => !v)}
+          >
+            Skeleton
+          </button>
+          <button
+            type="button"
+            className={showClubPath ? "toggle selected" : "toggle"}
+            aria-pressed={showClubPath}
+            disabled={!yoloAvailable}
+            title={
+              yoloAvailable
+                ? "Show or hide the club swing-path tracer"
+                : "This swing has no YOLO clubhead detections -- train and install backend/app/models/clubhead.pt"
+            }
+            onClick={() => setShowClubPath((v) => !v)}
+          >
+            Swing path
+          </button>
+        </div>
         <button
           type="button"
           className={compareMode ? "toggle selected" : "toggle"}
