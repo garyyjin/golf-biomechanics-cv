@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest";
+import {
+  LEFT_HIP,
+  LEFT_INDEX,
+  LEFT_SHOULDER,
+  LEFT_WRIST,
+  RIGHT_HIP,
+  RIGHT_INDEX,
+  RIGHT_SHOULDER,
+  RIGHT_WRIST,
+} from "./geometry";
 import { fillClubGaps, hasClubTrack, resolveClubTip } from "./club";
+import { makeLandmarks } from "./testUtils";
 import type { PoseFrame } from "./types";
 
 function makeFrames(clubs: ({ x: number; y: number } | null)[]): PoseFrame[] {
@@ -91,16 +102,37 @@ describe("hasClubTrack", () => {
 
 describe("resolveClubTip", () => {
   const yoloTrack = [{ x: 0.9, y: 0.9 }, null];
-
-  it("returns the track's point for that frame", () => {
-    expect(resolveClubTip(0, yoloTrack)).toEqual({ x: 0.9, y: 0.9 });
+  // shoulder-mid (0.5,0.3) to hip-mid (0.5,0.7): torso length 0.4, shaft
+  // length 0.4 * 1.6 = 0.64; knuckles straight above the wrists -> estimate
+  // extends straight up to (0.5, -0.04).
+  const landmarks = makeLandmarks({
+    [LEFT_SHOULDER]: { x: 0.4, y: 0.3 },
+    [RIGHT_SHOULDER]: { x: 0.6, y: 0.3 },
+    [LEFT_HIP]: { x: 0.4, y: 0.7 },
+    [RIGHT_HIP]: { x: 0.6, y: 0.7 },
+    [LEFT_WRIST]: { x: 0.5, y: 0.6 },
+    [RIGHT_WRIST]: { x: 0.5, y: 0.6 },
+    [LEFT_INDEX]: { x: 0.5, y: 0.5 },
+    [RIGHT_INDEX]: { x: 0.5, y: 0.5 },
   });
 
-  it("returns null on a miss rather than estimating a fallback", () => {
-    expect(resolveClubTip(1, yoloTrack)).toBeNull();
+  it("returns the track's point for that frame over the body-pose estimate", () => {
+    expect(resolveClubTip(0, yoloTrack, landmarks, "right")).toEqual({ x: 0.9, y: 0.9 });
   });
 
-  it("returns null when there's no track at all", () => {
-    expect(resolveClubTip(0, null)).toBeNull();
+  it("falls back to the body-pose estimate on a miss", () => {
+    const tip = resolveClubTip(1, yoloTrack, landmarks, "right");
+    expect(tip!.x).toBeCloseTo(0.5, 6);
+    expect(tip!.y).toBeCloseTo(-0.04, 6);
+  });
+
+  it("returns null when there's no track and no estimate available (no landmarks)", () => {
+    expect(resolveClubTip(1, yoloTrack, null, "right")).toBeNull();
+  });
+
+  it("returns the body-pose estimate when there's no track at all", () => {
+    const tip = resolveClubTip(0, null, landmarks, "right");
+    expect(tip!.x).toBeCloseTo(0.5, 6);
+    expect(tip!.y).toBeCloseTo(-0.04, 6);
   });
 });

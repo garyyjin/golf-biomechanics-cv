@@ -1,5 +1,7 @@
+import { clubTipEstimate } from "./geometry";
+import type { Point } from "./geometry";
 import { interpolateGaps } from "./phases";
-import type { PoseFrame } from "./types";
+import type { Handedness, Landmark, PoseFrame } from "./types";
 
 export interface ClubPoint {
   x: number;
@@ -86,17 +88,25 @@ export function hasClubTrack(track: (ClubPoint | null)[]): boolean {
 }
 
 /**
- * The clubhead point to draw for one frame, from the gap-filled YOLO track
- * (see fillClubGaps) — null when nothing covers this frame (before the
- * first detection, after the last, or a rejected outlier with no
- * bracketing neighbor to interpolate from).
- *
- * Deliberately does not fall back to a body-pose estimate on a miss (this
- * used to fall back to geometry.ts's clubTipEstimate): that estimate just
- * projects a fixed length from the wrist in the hand's current orientation,
- * which isn't the actual shaft angle mid-swing -- it reads as the tracer
- * being stuck at the hands rather than an honest "no detection here".
+ * The clubhead point to draw for one frame: the gap-filled YOLO track (see
+ * fillClubGaps) where it has one, otherwise the body-pose estimate
+ * (geometry.ts's clubTipEstimate). A real detector miss is common on fast,
+ * motion-blurred downswing/impact frames -- exactly the stretch a swing
+ * path needs to cover -- and interpolation only bridges gaps bounded by a
+ * real detection on both sides. Without this fallback, a miss that runs to
+ * the end of the visible detections (impact is often the last one the
+ * detector picks back up on) just stops the trail short instead of
+ * following the club the rest of the way. The estimate is a rough
+ * approximation (it projects a fixed length from the wrist in the hand's
+ * orientation, not the true shaft angle), but a rough line beats no line for
+ * the stretch nothing else covers.
  */
-export function resolveClubTip(index: number, yoloTrack: (ClubPoint | null)[] | null): ClubPoint | null {
-  return yoloTrack?.[index] ?? null;
+export function resolveClubTip(
+  index: number,
+  yoloTrack: (ClubPoint | null)[] | null,
+  smoothed: Landmark[] | null,
+  handedness: Handedness,
+): Point | null {
+  const detected = yoloTrack?.[index] ?? null;
+  return detected ?? clubTipEstimate(smoothed, handedness);
 }

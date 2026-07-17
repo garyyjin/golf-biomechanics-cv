@@ -82,7 +82,7 @@ export function renderOverlayFrame(
     // instead of continuing to append points.
     const { impactIndex } = clubTracer;
     if (impactIndex === null || index <= impactIndex) {
-      const rawTip = resolveClubTip(index, clubTracer.yoloTrack);
+      const rawTip = resolveClubTip(index, clubTracer.yoloTrack, smoothed, handedness);
       const tip = state.clubSmoother.apply(rawTip, index);
       if (tip) {
         state.clubTrail = [...state.clubTrail, { ...tip, frameIndex: index }];

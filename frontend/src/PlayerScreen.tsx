@@ -712,7 +712,7 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
             {yoloAvailable && (
               <div className="readout-row">
                 <span className="swatch" style={{ background: `rgb(${CLUB_TRACER_COLOR.join(", ")})` }} />
-                <span>Club path (red: backswing, green: downswing)</span>
+                <span>Club path (red: backswing, green: downswing; approx. where undetected)</span>
               </div>
             )}
             {view === "down_the_line" && (
