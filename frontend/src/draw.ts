@@ -1,10 +1,24 @@
-import type { ClubSegment, LineId, NormalizedPoint, OverlayLine, Point } from "./geometry";
+import type { ClubSegment, ClubTrailPoint, LineId, NormalizedPoint, OverlayLine, Point } from "./geometry";
 import { POSE_CONNECTIONS, VISIBILITY_THRESHOLD } from "./pose";
 import type { Landmark } from "./types";
 
-const BONE_COLOR = "rgba(80, 220, 130, 0.9)";
+const BONE_COLOR = "rgba(80, 220, 130, 0.72)";
 const JOINT_COLOR = "rgba(255, 255, 255, 0.95)";
-const CLUB_TRACER_COLOR = [255, 199, 44] as const;
+// Dims the angle-line strokes a bit without touching their labels (drawn
+// separately, at full opacity, via drawLabelChip below) -- a translucent
+// stroke reads better against the video than the labels would.
+const LINE_STROKE_OPACITY = 0.8;
+
+function hexToRgba(hex: string, alpha: number): string {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+// Also used as the single generic "club" color outside the tracer (the
+// comparison diagram's club segment, the video overlay's legend swatch).
+export const CLUB_TRACER_COLOR = [230, 30, 30] as const; // red -- backswing/takeback
+const CLUB_DOWNSWING_COLOR = [40, 190, 90] as const; // green -- downswing
 
 export const LINE_COLORS: Record<LineId, string> = {
   spine: "#ff9f43",
@@ -87,7 +101,7 @@ export function drawOverlayLines(
     }
 
     const color = LINE_COLORS[line.id];
-    ctx.strokeStyle = color;
+    ctx.strokeStyle = hexToRgba(color, LINE_STROKE_OPACITY);
     ctx.lineWidth = lineWidth;
     ctx.lineCap = "round";
     ctx.setLineDash(line.fixed ? [6, 6] : []);
@@ -127,37 +141,120 @@ export function drawOverlayLines(
 }
 
 /**
- * Draws a fading trail through recent estimated club-head positions (see
- * geometry.ts's clubTipEstimate — MediaPipe has no club detection, so this
- * is an approximation anchored to hand position, not a real measurement).
- * `trail` is oldest-first; opacity ramps up toward the newest point so the
- * tracer reads as motion rather than a static streak.
+ * Strokes the swing-path trail. Points are joined with quadratic curves
+ * through each pair's midpoint (a standard curve-through-points trick: treat
+ * every real point as a curve's control point, and the midpoints between
+ * consecutive points as the on-curve anchors) rather than straight lineTo
+ * segments, so the path reads as a smooth curve instead of an angular
+ * polyline — this smooths the line's shape only, with no time delay, unlike
+ * smoothing the point itself (PointSmoother in smoothing.ts) which would make
+ * the tracer lag behind the actual clubhead.
+ */
+function strokeTrailSegment(
+  ctx: CanvasRenderingContext2D,
+  points: Point[],
+  cssWidth: number,
+  cssHeight: number,
+  color: readonly [number, number, number],
+  lineWidth: number,
+): void {
+  if (points.length < 2) return;
+  const [r, g, b] = color;
+  const pts = points.map((p) => ({ x: p.x * cssWidth, y: p.y * cssHeight }));
+  ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, 0.9)`;
+  ctx.lineWidth = lineWidth;
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length - 1; i++) {
+    const midX = (pts[i].x + pts[i + 1].x) / 2;
+    const midY = (pts[i].y + pts[i + 1].y) / 2;
+    ctx.quadraticCurveTo(pts[i].x, pts[i].y, midX, midY);
+  }
+  ctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y);
+  ctx.stroke();
+}
+
+// How many neighboring recorded points get averaged into each drawn point.
+// The trail records one point per rendered video frame, but the drawn path
+// shouldn't be that fine-grained -- at 30-60fps, per-frame detector noise
+// (a pixel or two of jitter) reads as visible kinks when every single frame
+// is a curve anchor. Averaging over a wider neighborhood than any one frame
+// smooths those kinks out; this only affects what gets drawn; the
+// underlying trail (and the live tip position derived from it elsewhere)
+// keeps its real per-frame data. Kept fairly small on purpose: a wider
+// window also rounds off real sharp turns -- most visibly the top of the
+// backswing, an actual direction reversal -- into a softer curve that
+// undershoots how far the swing really goes back.
+const TRAIL_SMOOTHING_WINDOW = 5;
+
+/**
+ * Symmetric moving average over each point's (up to) `window` nearest
+ * neighbors on both sides, clamped at the trail's ends where fewer are
+ * available. frameIndex is preserved from the center point unchanged, since
+ * it's what drawClubTracer uses to split backswing from downswing.
+ */
+function smoothTrailForDisplay(trail: ClubTrailPoint[], window: number): ClubTrailPoint[] {
+  const half = Math.floor(window / 2);
+  return trail.map((point, i) => {
+    const start = Math.max(0, i - half);
+    const end = Math.min(trail.length - 1, i + half);
+    let sumX = 0;
+    let sumY = 0;
+    for (let j = start; j <= end; j++) {
+      sumX += trail[j].x;
+      sumY += trail[j].y;
+    }
+    const count = end - start + 1;
+    return { x: sumX / count, y: sumY / count, frameIndex: point.frameIndex };
+  });
+}
+
+/**
+ * Draws the swing-path trail, solid and permanent (no fade) rather than
+ * ghosting out — `trail` only shrinks back to empty on a scrub/seek (see
+ * overlayRenderer.ts), and otherwise keeps growing for as long as the swing
+ * plays out (it never freezes at impact, unlike an earlier version of this:
+ * detectPhases' impact frame index can be wrong on hard footage, and a bad
+ * one froze the trail early, looking like tracking had stopped partway
+ * through the swing) — so during a normal play-through it traces the
+ * backswing/takeback in red and the downswing in green, matching a
+ * broadcast swing-path overlay.
+ *
+ * topIndex (the top-of-backswing phase's frame index, see phases.ts) is the
+ * cut point between the two colors; frames at or before it are
+ * backswing/takeback (red), frames after it are downswing (green, which
+ * then also covers the follow-through -- there's no third color). The
+ * boundary point is included in both segments so the two colors join with
+ * no gap. When topIndex is unknown (phase detection failed), the whole
+ * trail draws red.
  */
 export function drawClubTracer(
   ctx: CanvasRenderingContext2D,
-  trail: Point[],
+  trail: ClubTrailPoint[],
   cssWidth: number,
   cssHeight: number,
+  topIndex: number | null,
 ): void {
   if (trail.length === 0) return;
-  const [r, g, b] = CLUB_TRACER_COLOR;
   const scale = Math.max(cssWidth, cssHeight);
   const lineWidth = Math.max(1.5, scale * 0.006);
+  const smoothed = smoothTrailForDisplay(trail, TRAIL_SMOOTHING_WINDOW);
 
-  if (trail.length > 1) {
-    ctx.lineCap = "round";
-    ctx.lineWidth = lineWidth;
-    for (let i = 1; i < trail.length; i++) {
-      const t = i / (trail.length - 1);
-      ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${(0.15 + 0.75 * t).toFixed(3)})`;
-      ctx.beginPath();
-      ctx.moveTo(trail[i - 1].x * cssWidth, trail[i - 1].y * cssHeight);
-      ctx.lineTo(trail[i].x * cssWidth, trail[i].y * cssHeight);
-      ctx.stroke();
-    }
-  }
+  const backswing = smoothed.filter((p) => topIndex === null || p.frameIndex <= topIndex);
+  const downswing = topIndex === null ? [] : smoothed.filter((p) => p.frameIndex >= topIndex);
 
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  strokeTrailSegment(ctx, backswing, cssWidth, cssHeight, CLUB_TRACER_COLOR, lineWidth);
+  strokeTrailSegment(ctx, downswing, cssWidth, cssHeight, CLUB_DOWNSWING_COLOR, lineWidth);
+
+  // The tip marker deliberately uses the raw (unsmoothed) last point, not
+  // `smoothed` -- it's the live tracked position while the trail is still
+  // extending, and averaging it in with past points would lag it behind the
+  // actual clubhead the same way over-smoothing PointSmoother would.
   const tip = trail[trail.length - 1];
+  const tipColor = topIndex !== null && tip.frameIndex > topIndex ? CLUB_DOWNSWING_COLOR : CLUB_TRACER_COLOR;
+  const [r, g, b] = tipColor;
   ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.95)`;
   ctx.beginPath();
   ctx.arc(tip.x * cssWidth, tip.y * cssHeight, Math.max(2.5, scale * 0.007), 0, Math.PI * 2);

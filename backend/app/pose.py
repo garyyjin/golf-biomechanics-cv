@@ -44,6 +44,24 @@ def _hand_candidate(landmarks: list[dict], wrist_idx: int, index_idx: int) -> tu
     return (wrist, index_lm, visibility)
 
 
+def _wrist_point(landmarks: list[dict], width: int, height: int) -> tuple[float, float] | None:
+    """Pixel-space position of whichever wrist is more visible, for anchoring
+    the YOLO clubhead detection's tip-vs-center choice (see app/club.py) —
+    same "pick the more visible hand" policy as _detect_club_tip below."""
+    candidates = [
+        c
+        for c in (
+            _hand_candidate(landmarks, _LEFT_WRIST, _LEFT_INDEX),
+            _hand_candidate(landmarks, _RIGHT_WRIST, _RIGHT_INDEX),
+        )
+        if c is not None
+    ]
+    if not candidates:
+        return None
+    wrist, _, _ = max(candidates, key=lambda c: c[2])
+    return (wrist["x"] * width, wrist["y"] * height)
+
+
 def _detect_club_tip(frame, landmarks: list[dict], width: int, height: int) -> dict | None:
     """Approximates the club-head pixel position with a Hough line detection
     anchored near the hands, rather than inferring it purely from body pose.
@@ -172,7 +190,10 @@ def analyze_video(
     trained (once weights exist) independently of the Hough-line approach
     above. Deliberately not reconciled with club_tip yet: this is additive
     data for evaluating the two approaches side by side, not a replacement.
-    Always None until backend/app/models/clubhead.pt exists.
+    Always None until backend/app/models/clubhead.pt exists. When landmarks
+    are available, the more-visible wrist is passed in as an anchor so
+    detect_club can return the clubhead's tip (farthest box corner) rather
+    than its center; with no landmarks this frame, it falls back to center.
 
     on_progress(current_index, total_frames), if given, is called after each
     frame is processed — total_frames comes from CAP_PROP_FRAME_COUNT, which
@@ -247,7 +268,8 @@ def analyze_video(
                     for lm in result.pose_landmarks.landmark
                 ]
                 club_tip = _detect_club_tip(frame, landmarks, width, height)
-            club_tip_yolo = detect_club(frame)
+            hand_point = _wrist_point(landmarks, width, height) if landmarks is not None else None
+            club_tip_yolo = detect_club(frame, hand_point)
             frames.append(
                 {
                     "index": index,

@@ -1,12 +1,11 @@
 import { resolveClubTip } from "./club.ts";
-import type { ClubDetector, ClubPoint } from "./club.ts";
+import type { ClubPoint } from "./club.ts";
 import { drawClubTracer, drawOverlayLines, drawSkeleton } from "./draw.ts";
 import { computeOverlayLines } from "./geometry.ts";
-import type { AddressRefs, OverlayLine, Point } from "./geometry.ts";
+import type { AddressRefs, ClubTrailPoint, OverlayLine } from "./geometry.ts";
 import { LandmarkSmoother, PointSmoother } from "./smoothing.ts";
 import type { Handedness, PoseFrame, View } from "./types.ts";
 
-const CLUB_TRAIL_MAX_LENGTH = 18;
 const CLUB_TRAIL_JUMP_THRESHOLD = 2;
 
 /**
@@ -17,7 +16,7 @@ const CLUB_TRAIL_JUMP_THRESHOLD = 2;
 export interface OverlayRenderState {
   smoother: LandmarkSmoother;
   clubSmoother: PointSmoother;
-  clubTrail: Point[];
+  clubTrail: ClubTrailPoint[];
   prevIndex: number | null;
 }
 
@@ -36,11 +35,11 @@ export function createOverlayRenderState(): OverlayRenderState {
  * caller can feed the angle readout. drawSkeleton clears the canvas first,
  * so no explicit clear is needed.
  *
- * The club tracer is opt-in (off by default) — both detectors behind it
- * (Hough-line shaft detection, and the geometric fallback estimate it uses
- * when detection fails) are too erratic to show right now. See
- * project_club_tracking_* history for why; the drawing/resolution code is
- * left in place so it's cheap to turn back on once that's fixed.
+ * The club tracer is opt-in: ReferenceVideo never passes clubTracer (no
+ * tracer on the reference swing), while PlayerScreen passes it whenever the
+ * analysis has any YOLO clubhead detections at all (see hasClubTrack).
+ * showSkeleton defaults to true (ReferenceVideo doesn't offer a toggle) and
+ * only affects the bones/joints drawing.
  */
 export function renderOverlayFrame(
   ctx: CanvasRenderingContext2D,
@@ -53,11 +52,20 @@ export function renderOverlayFrame(
   aspect: number,
   addressRefs: AddressRefs,
   state: OverlayRenderState,
-  clubTracer?: { detector: ClubDetector; yoloTrack: (ClubPoint | null)[] | null },
+  clubTracer?: {
+    yoloTrack: (ClubPoint | null)[] | null;
+    topIndex: number | null;
+    impactIndex: number | null;
+  },
+  showSkeleton = true,
 ): OverlayLine[] {
   const smoothed = state.smoother.apply(frames[index].landmarks, index);
   const overlay = computeOverlayLines(view, smoothed, handedness, aspect, addressRefs);
-  drawSkeleton(ctx, smoothed, cssWidth, cssHeight);
+  // drawSkeleton clears the canvas regardless of what it's given, so passing
+  // null when the toggle is off still clears last frame's drawing without
+  // drawing bones/joints -- the angle-line overlay and club tracer (drawn
+  // below) are independent of this toggle and use the real `smoothed` data.
+  drawSkeleton(ctx, showSkeleton ? smoothed : null, cssWidth, cssHeight);
   drawOverlayLines(ctx, overlay, cssWidth, cssHeight);
 
   if (clubTracer) {
@@ -69,12 +77,18 @@ export function renderOverlayFrame(
     }
     state.prevIndex = index;
 
-    const rawTip = resolveClubTip(clubTracer.detector, frames, index, clubTracer.yoloTrack, smoothed, handedness);
-    const tip = state.clubSmoother.apply(rawTip, index);
-    if (tip) {
-      state.clubTrail = [...state.clubTrail, tip].slice(-CLUB_TRAIL_MAX_LENGTH);
+    // Past impact, the swing path is complete -- freeze the trail (a real
+    // swing-path graphic doesn't keep drawing through the follow-through)
+    // instead of continuing to append points.
+    const { impactIndex } = clubTracer;
+    if (impactIndex === null || index <= impactIndex) {
+      const rawTip = resolveClubTip(index, clubTracer.yoloTrack, smoothed, handedness);
+      const tip = state.clubSmoother.apply(rawTip, index);
+      if (tip) {
+        state.clubTrail = [...state.clubTrail, { ...tip, frameIndex: index }];
+      }
     }
-    drawClubTracer(ctx, state.clubTrail, cssWidth, cssHeight);
+    drawClubTracer(ctx, state.clubTrail, cssWidth, cssHeight, clubTracer.topIndex);
   }
 
   return overlay;
