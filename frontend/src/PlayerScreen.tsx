@@ -297,7 +297,9 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
         aspect,
         addressRefs,
         rendererStateRef.current,
-        yoloAvailable && showClubPath ? { yoloTrack: clubTrack, topIndex: feedback.phases.top } : undefined,
+        yoloAvailable && showClubPath
+          ? { yoloTrack: clubTrack, topIndex: feedback.phases.top, impactIndex: feedback.phases.impact }
+          : undefined,
         showSkeleton,
       );
       setLines(overlay);
@@ -313,6 +315,7 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
       showClubPath,
       clubTrack,
       feedback.phases.top,
+      feedback.phases.impact,
       showSkeleton,
     ],
   );

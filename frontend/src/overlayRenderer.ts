@@ -52,7 +52,11 @@ export function renderOverlayFrame(
   aspect: number,
   addressRefs: AddressRefs,
   state: OverlayRenderState,
-  clubTracer?: { yoloTrack: (ClubPoint | null)[] | null; topIndex: number | null },
+  clubTracer?: {
+    yoloTrack: (ClubPoint | null)[] | null;
+    topIndex: number | null;
+    impactIndex: number | null;
+  },
   showSkeleton = true,
 ): OverlayLine[] {
   const smoothed = state.smoother.apply(frames[index].landmarks, index);
@@ -73,14 +77,16 @@ export function renderOverlayFrame(
     }
     state.prevIndex = index;
 
-    // Deliberately never freezes the trail (e.g. at impact): an earlier
-    // version did, keyed off detectPhases' impact frame index, but that
-    // index can be wrong on hard footage and froze the trail early, looking
-    // like tracking had stopped partway through the swing.
-    const rawTip = resolveClubTip(index, clubTracer.yoloTrack, smoothed, handedness);
-    const tip = state.clubSmoother.apply(rawTip, index);
-    if (tip) {
-      state.clubTrail = [...state.clubTrail, { ...tip, frameIndex: index }];
+    // Past impact, the swing path is complete -- freeze the trail (a real
+    // swing-path graphic doesn't keep drawing through the follow-through)
+    // instead of continuing to append points.
+    const { impactIndex } = clubTracer;
+    if (impactIndex === null || index <= impactIndex) {
+      const rawTip = resolveClubTip(index, clubTracer.yoloTrack, smoothed, handedness);
+      const tip = state.clubSmoother.apply(rawTip, index);
+      if (tip) {
+        state.clubTrail = [...state.clubTrail, { ...tip, frameIndex: index }];
+      }
     }
     drawClubTracer(ctx, state.clubTrail, cssWidth, cssHeight, clubTracer.topIndex);
   }
