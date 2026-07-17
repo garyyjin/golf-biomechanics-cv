@@ -1,4 +1,4 @@
-import type { ClubSegment, LineId, NormalizedPoint, OverlayLine, Point } from "./geometry";
+import type { ClubSegment, ClubTrailPoint, LineId, NormalizedPoint, OverlayLine, Point } from "./geometry";
 import { POSE_CONNECTIONS, VISIBILITY_THRESHOLD } from "./pose";
 import type { Landmark } from "./types";
 
@@ -17,7 +17,8 @@ function hexToRgba(hex: string, alpha: number): string {
 }
 // Also used as the single generic "club" color outside the tracer (the
 // comparison diagram's club segment, the video overlay's legend swatch).
-export const CLUB_TRACER_COLOR = [230, 30, 30] as const;
+export const CLUB_TRACER_COLOR = [230, 30, 30] as const; // red -- backswing/takeback
+const CLUB_DOWNSWING_COLOR = [40, 190, 90] as const; // green -- downswing
 
 export const LINE_COLORS: Record<LineId, string> = {
   spine: "#ff9f43",
@@ -186,11 +187,12 @@ const TRAIL_SMOOTHING_WINDOW = 11;
 /**
  * Symmetric moving average over each point's (up to) `window` nearest
  * neighbors on both sides, clamped at the trail's ends where fewer are
- * available.
+ * available. frameIndex is preserved from the center point unchanged, since
+ * it's what drawClubTracer uses to split backswing from downswing.
  */
-function smoothTrailForDisplay(trail: Point[], window: number): Point[] {
+function smoothTrailForDisplay(trail: ClubTrailPoint[], window: number): ClubTrailPoint[] {
   const half = Math.floor(window / 2);
-  return trail.map((_, i) => {
+  return trail.map((point, i) => {
     const start = Math.max(0, i - half);
     const end = Math.min(trail.length - 1, i + half);
     let sumX = 0;
@@ -200,44 +202,56 @@ function smoothTrailForDisplay(trail: Point[], window: number): Point[] {
       sumY += trail[j].y;
     }
     const count = end - start + 1;
-    return { x: sumX / count, y: sumY / count };
+    return { x: sumX / count, y: sumY / count, frameIndex: point.frameIndex };
   });
 }
 
 /**
  * Draws the swing-path trail, solid and permanent (no fade) rather than
  * ghosting out — `trail` only shrinks back to empty on a scrub/seek (see
- * overlayRenderer.ts), so during a normal play-through it keeps growing for
- * as long as the swing plays out, covering the whole thing in one color.
+ * overlayRenderer.ts), and otherwise keeps growing for as long as the swing
+ * plays out (it never freezes at impact, unlike an earlier version of this:
+ * detectPhases' impact frame index can be wrong on hard footage, and a bad
+ * one froze the trail early, looking like tracking had stopped partway
+ * through the swing) — so during a normal play-through it traces the
+ * backswing/takeback in red and the downswing in green, matching a
+ * broadcast swing-path overlay.
  *
- * Deliberately doesn't split the trail by swing phase or freeze it at
- * impact: both depended on detectPhases' heuristic top-of-backswing/impact
- * frame indices, which can be wrong on hard footage (poor lighting, an
- * unusual camera angle) -- a wrong impact frame froze the trail early,
- * looking like it had stopped tracking partway through the swing. A single
- * continuous line has nothing to get wrong that way.
+ * topIndex (the top-of-backswing phase's frame index, see phases.ts) is the
+ * cut point between the two colors; frames at or before it are
+ * backswing/takeback (red), frames after it are downswing (green, which
+ * then also covers the follow-through -- there's no third color). The
+ * boundary point is included in both segments so the two colors join with
+ * no gap. When topIndex is unknown (phase detection failed), the whole
+ * trail draws red.
  */
 export function drawClubTracer(
   ctx: CanvasRenderingContext2D,
-  trail: Point[],
+  trail: ClubTrailPoint[],
   cssWidth: number,
   cssHeight: number,
+  topIndex: number | null,
 ): void {
   if (trail.length === 0) return;
   const scale = Math.max(cssWidth, cssHeight);
   const lineWidth = Math.max(1.5, scale * 0.006);
   const smoothed = smoothTrailForDisplay(trail, TRAIL_SMOOTHING_WINDOW);
 
+  const backswing = smoothed.filter((p) => topIndex === null || p.frameIndex <= topIndex);
+  const downswing = topIndex === null ? [] : smoothed.filter((p) => p.frameIndex >= topIndex);
+
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
-  strokeTrailSegment(ctx, smoothed, cssWidth, cssHeight, CLUB_TRACER_COLOR, lineWidth);
+  strokeTrailSegment(ctx, backswing, cssWidth, cssHeight, CLUB_TRACER_COLOR, lineWidth);
+  strokeTrailSegment(ctx, downswing, cssWidth, cssHeight, CLUB_DOWNSWING_COLOR, lineWidth);
 
   // The tip marker deliberately uses the raw (unsmoothed) last point, not
   // `smoothed` -- it's the live tracked position while the trail is still
   // extending, and averaging it in with past points would lag it behind the
   // actual clubhead the same way over-smoothing PointSmoother would.
   const tip = trail[trail.length - 1];
-  const [r, g, b] = CLUB_TRACER_COLOR;
+  const tipColor = topIndex !== null && tip.frameIndex > topIndex ? CLUB_DOWNSWING_COLOR : CLUB_TRACER_COLOR;
+  const [r, g, b] = tipColor;
   ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.95)`;
   ctx.beginPath();
   ctx.arc(tip.x * cssWidth, tip.y * cssHeight, Math.max(2.5, scale * 0.007), 0, Math.PI * 2);

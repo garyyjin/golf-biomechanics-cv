@@ -45,7 +45,7 @@ describe("renderOverlayFrame's club trail", () => {
     const yoloTrack = frames.map((f) => f.club_tip_yolo ?? null);
 
     for (let i = 0; i < frames.length; i++) {
-      renderOverlayFrame(ctx, 100, 100, i, frames, "face_on", "right", 1, ADDRESS_REFS, state, { yoloTrack });
+      renderOverlayFrame(ctx, 100, 100, i, frames, "face_on", "right", 1, ADDRESS_REFS, state, { yoloTrack, topIndex: null });
     }
 
     expect(state.clubTrail).toHaveLength(3);
@@ -68,12 +68,12 @@ describe("renderOverlayFrame's club trail", () => {
     ];
     const frames = yoloTrack.map((club_tip_yolo, index) => frame(index, club_tip_yolo));
 
-    renderOverlayFrame(ctx, 100, 100, 0, frames, "face_on", "right", 1, ADDRESS_REFS, state, { yoloTrack });
-    renderOverlayFrame(ctx, 100, 100, 1, frames, "face_on", "right", 1, ADDRESS_REFS, state, { yoloTrack });
+    renderOverlayFrame(ctx, 100, 100, 0, frames, "face_on", "right", 1, ADDRESS_REFS, state, { yoloTrack, topIndex: null });
+    renderOverlayFrame(ctx, 100, 100, 1, frames, "face_on", "right", 1, ADDRESS_REFS, state, { yoloTrack, topIndex: null });
     expect(state.clubTrail).toHaveLength(2);
 
     // Jump straight to frame 9 (a scrub).
-    renderOverlayFrame(ctx, 100, 100, 9, frames, "face_on", "right", 1, ADDRESS_REFS, state, { yoloTrack });
+    renderOverlayFrame(ctx, 100, 100, 9, frames, "face_on", "right", 1, ADDRESS_REFS, state, { yoloTrack, topIndex: null });
     expect(state.clubTrail).toHaveLength(1);
   });
 
@@ -97,6 +97,7 @@ describe("renderOverlayFrame's club trail", () => {
 
     renderOverlayFrame(ctx, 100, 100, 0, frames, "face_on", "right", 1, ADDRESS_REFS, state, {
       yoloTrack: [null],
+      topIndex: null,
     });
 
     expect(state.clubTrail).toHaveLength(1);
