@@ -87,15 +87,24 @@ library of reference swings to see whether they fall inside a normal range.
 
 ### Club tracking
 
-- Per-frame club tip approximation via Canny + probabilistic Hough line
-  detection anchored near the hands (golf shafts are thin, high-contrast
-  lines starting at the hands), falling back to a body-pose-based estimate
-  when no confident line is found.
-- An experimental per-frame YOLOv8n clubhead detector (trained offline on
-  the public Roboflow "golf-club-tracking" dataset of ~11.5k labeled
-  images via `backend/training/train_clubhead.py`) runs alongside for
-  evaluation, with short detection gaps bridged by interpolation. It is
-  inactive until trained weights exist at `backend/app/models/clubhead.pt`.
+- A per-frame YOLOv8n clubhead detector (trained offline on the public
+  Roboflow "golf-club-tracking" dataset of ~11.5k labeled images via
+  `backend/training/train_clubhead.py`) reports a clubhead position each
+  frame independently, with short detection gaps bridged by interpolation
+  — falling back to a body-pose-based estimate when no confident detection
+  exists.
+- A toggleable swing-path tracer draws the tracked clubhead's path over
+  the video (red on the takeback, green on the downswing), frozen at
+  impact rather than continuing through follow-through.
+
+### Swing stats
+
+- Clubhead speed, estimated ball speed, and estimated carry distance,
+  derived from the club tracer's positions around address and impact.
+  These are rough estimates, not launch-monitor-grade measurements — they
+  assume a fixed club length (driver) and a typical smash factor, and
+  ignore spin and drag entirely. The panel is explicit about this rather
+  than presenting the numbers as precise.
 
 ## Architecture
 
@@ -124,7 +133,7 @@ library of reference swings to see whether they fall inside a normal range.
 | [MediaPipe](https://ai.google.dev/edge/mediapipe) | Pose landmark extraction (33 landmarks/frame) |
 | [OpenCV](https://opencv.org/) (`opencv-python`) | Video decoding, rotation handling, Canny + Hough club-shaft detection |
 | [NumPy](https://numpy.org/) | Frame/array math |
-| [Ultralytics](https://docs.ultralytics.com/) (YOLOv8) | Experimental clubhead detector (training + inference) |
+| [Ultralytics](https://docs.ultralytics.com/) (YOLOv8) | Clubhead detector (training + inference) |
 | pytest + httpx | Backend tests |
 
 ### Frontend (TypeScript)

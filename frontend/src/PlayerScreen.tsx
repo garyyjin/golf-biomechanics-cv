@@ -21,6 +21,8 @@ import { listReferenceSwings } from "./libraryApi";
 import type { LibraryEntry } from "./libraryApi";
 import { createOverlayRenderState, renderOverlayFrame } from "./overlayRenderer";
 import { ReferenceVideo } from "./ReferenceVideo";
+import { StatsPanel } from "./StatsPanel";
+import { computeSwingStats } from "./stats";
 import { SwingScoreBadge } from "./SwingScoreBadge";
 import { computeSwingScore } from "./swingScore";
 import { computeTempoScore, describeTempoRatio } from "./tempo";
@@ -264,6 +266,10 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
 
   const feedback = useMemo(() => computeFeedback(analysis, benchmarks), [analysis, benchmarks]);
   const swingScore = useMemo(() => computeSwingScore(feedback), [feedback]);
+  const swingStats = useMemo(
+    () => computeSwingStats(frames, clubTrack, feedback.phases, handedness),
+    [frames, clubTrack, feedback.phases, handedness],
+  );
 
   // Down-the-line footage is most accurate when the camera sits directly on
   // the target line; a camera off to the side reveals stance width on
@@ -700,6 +706,8 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
           }
         >
           <SwingScoreBadge score={swingScore} />
+
+          <StatsPanel stats={swingStats} />
 
           <aside className="readout-panel">
             <h2>{view === "face_on" ? "Face-on" : "Down-the-line"}</h2>
