@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { LEFT_WRIST, RIGHT_WRIST } from "./geometry";
+import { LEFT_HIP, LEFT_SHOULDER, LEFT_WRIST, RIGHT_HIP, RIGHT_SHOULDER, RIGHT_WRIST } from "./geometry";
 import { computeSwingStats, DRIVER_CARRY_REGRESSION, estimateCarryYards } from "./stats";
 import { makeLandmarks } from "./testUtils";
 import type { PoseFrame } from "./types";
@@ -41,12 +41,16 @@ describe("computeSwingStats", () => {
     expect(stats.diagnostic).toEqual({ gate: "phase-detection", address: null, impact: null });
   });
 
-  it("returns all-null when impact is at the very edge (no before/after frame)", () => {
+  it("returns all-null when impact is at the very edge and there's nothing after it to measure", () => {
+    // impact sitting at the clip's edge no longer blocks outright (see
+    // computeFromSource) -- this still ends up null because there's truly
+    // only one real detection in the whole clip (the address frame's own),
+    // which the speed search correctly refuses to pair with itself.
     const frames = [frame(0, 0, ADDRESS_LANDMARKS, { x: 0.5, y: 0.8 }), frame(1, 1 / 30)];
     const phases = { ...NO_PHASES, address: 0, impact: 1 }; // impact is the last frame
     const stats = computeSwingStats(frames, phases, "right");
     expect(stats.clubheadSpeedMph).toBeNull();
-    expect(stats.diagnostic).toEqual({ gate: "impact-at-clip-edge", impact: 1, frameCount: 2 });
+    expect(stats.diagnostic).toEqual({ gate: "no-detection-near-impact", impact: 1 });
   });
 
   it("returns all-null when the clubhead wasn't tracked anywhere near address (no calibration)", () => {
@@ -247,6 +251,111 @@ describe("computeSwingStats", () => {
     const phases = { ...NO_PHASES, address: 0, impact: 2 };
     const stats = computeSwingStats(frames, phases, "right");
     expect(stats.estCarryYards).toBeNull();
+  });
+
+  it("calibrates from the ball's own detected size when the clubhead was never tracked near address", () => {
+    // No club_tip/club_tip_yolo detection anywhere near address, so the
+    // existing grip-to-clubhead calibration can't fire -- but the ball's box
+    // size (roughly square, i.e. not motion-blurred) is visible at address,
+    // giving GOLF_BALL_DIAMETER_INCHES / medianDiameter (1.68 / 0.01 = 168
+    // in/unit) as the scale instead.
+    const frames: PoseFrame[] = [
+      { index: 0, t: 0, landmarks: ADDRESS_LANDMARKS, ball_tip: { x: 0.2, y: 0.2, width: 0.01, height: 0.01 } },
+      { index: 1, t: 1, landmarks: null, ball_tip: { x: 0.2, y: 0.2, width: 0.0102, height: 0.0098 } },
+      { index: 2, t: 2, landmarks: null, club_tip_yolo: { x: 0.6, y: 0.8 } },
+      { index: 3, t: 3, landmarks: null, club_tip_yolo: { x: 0.7, y: 0.6 } },
+    ];
+    const phases = { ...NO_PHASES, address: 0, impact: 2 };
+
+    const stats = computeSwingStats(frames, phases, "right");
+
+    expect(stats.calibrationSource).toBe("ball");
+    const expectedInches = Math.hypot(0.1, 0.2) * 168;
+    const expectedMph = (expectedInches / 1) * (3600 / 63360);
+    expect(stats.clubheadSpeedMph).toBeCloseTo(expectedMph, 6);
+  });
+
+  it("falls back to an assumed torso length when neither the ball nor the clubhead-at-address calibration is available", () => {
+    // Clubhead detections exist only far outside the +/-5-frame address
+    // calibration window (indices 10/11, address is 0), so the club-length
+    // method can't fire either -- torso length (0.2 normalized units here)
+    // against ASSUMED_TORSO_LENGTH_INCHES (20) is the only reference left.
+    const torsoLandmarks = makeLandmarks({
+      [LEFT_SHOULDER]: { x: 0.5, y: 0.3 },
+      [RIGHT_SHOULDER]: { x: 0.4, y: 0.3 },
+      [LEFT_HIP]: { x: 0.5, y: 0.5 },
+      [RIGHT_HIP]: { x: 0.4, y: 0.5 },
+    });
+    const frames: PoseFrame[] = [
+      { index: 0, t: 0, landmarks: torsoLandmarks },
+      ...Array.from({ length: 9 }, (_, i): PoseFrame => ({ index: i + 1, t: i + 1, landmarks: null })),
+      { index: 10, t: 10, landmarks: null, club_tip_yolo: { x: 0.6, y: 0.8 } },
+      { index: 11, t: 11, landmarks: null, club_tip_yolo: { x: 0.7, y: 0.6 } },
+    ];
+    const phases = { ...NO_PHASES, address: 0, impact: 10 };
+
+    const stats = computeSwingStats(frames, phases, "right");
+
+    expect(stats.calibrationSource).toBe("body-proportion");
+    const expectedInches = Math.hypot(0.1, 0.2) * 100; // 20in torso / 0.2 normalized units
+    const expectedMph = (expectedInches / 1) * (3600 / 63360);
+    expect(stats.clubheadSpeedMph).toBeCloseTo(expectedMph, 6);
+  });
+
+  it("widens the impact search to the whole clip when no real pair exists in the narrow impact window", () => {
+    // impact=25; the narrow +/-20-frame window covers indices [5, 45], but
+    // the only two real (non-address) detections are far outside it, at
+    // indices 1 and 3. Previously this nulled the whole panel; the widened
+    // fallback search (address+1..end) now still finds this pair.
+    const frames = Array.from({ length: 50 }, (_, i) => frame(i, i, i === 0 ? ADDRESS_LANDMARKS : null));
+    frames[0].club_tip_yolo = { x: 0.5, y: 0.8 }; // address calibration point
+    frames[1].club_tip_yolo = { x: 0.45, y: 0.8 };
+    frames[3].club_tip_yolo = { x: 0.55, y: 0.6 };
+    const phases = { ...NO_PHASES, address: 0, impact: 25 };
+
+    const stats = computeSwingStats(frames, phases, "right");
+
+    expect(stats.diagnostic).toEqual({ gate: "ok" });
+    const expectedInches = Math.hypot(0.1, 0.2) * 225;
+    const expectedMph = (expectedInches / 2) * (3600 / 63360);
+    expect(stats.clubheadSpeedMph).toBeCloseTo(expectedMph, 6);
+  });
+
+  it("clamps an implausibly fast reading to the plausible ceiling instead of nulling it out", () => {
+    const frames = [
+      frame(0, 0, ADDRESS_LANDMARKS, { x: 0.5, y: 0.8 }), // address: scale 225in/unit
+      frame(1, 0, null, { x: 0.5, y: 0.8 }),
+      frame(2, 0.0001, null, { x: 5, y: 5 }), // huge jump in 0.1ms
+    ];
+    const phases = { ...NO_PHASES, address: 0, impact: 1 };
+
+    const stats = computeSwingStats(frames, phases, "right");
+
+    expect(stats.diagnostic).toEqual({ gate: "ok" });
+    expect(stats.clubheadSpeedMph).toBe(160);
+  });
+
+  it("estimates a proxy impact from raw hand velocity when phase detection found nothing at all", () => {
+    const stillLandmarks = makeLandmarks({
+      [LEFT_WRIST]: { x: 0.5, y: 0.6 },
+      [RIGHT_WRIST]: { x: 0.5, y: 0.6 },
+    });
+    const fastLandmarks = makeLandmarks({
+      [LEFT_WRIST]: { x: 0.9, y: 0.9 },
+      [RIGHT_WRIST]: { x: 0.9, y: 0.9 },
+    });
+    const frames: PoseFrame[] = [
+      { index: 0, t: 0, landmarks: stillLandmarks, club_tip_yolo: { x: 0.5, y: 0.8 } },
+      { index: 1, t: 1, landmarks: stillLandmarks },
+      // The single fastest hand-position jump anywhere in the clip -- the
+      // proxy impact detectPhases couldn't find on its own.
+      { index: 2, t: 1.01, landmarks: fastLandmarks, club_tip_yolo: { x: 0.45, y: 0.8 } },
+      { index: 3, t: 2.01, landmarks: null, club_tip_yolo: { x: 0.55, y: 0.6 } },
+    ];
+
+    const stats = computeSwingStats(frames, NO_PHASES, "right");
+
+    expect(stats.clubheadSpeedMph).not.toBeNull();
   });
 });
 

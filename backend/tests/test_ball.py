@@ -42,10 +42,10 @@ def test_detect_ball_returns_none_when_no_model_is_installed(monkeypatch, tmp_pa
     assert detect_ball(frame) is None
 
 
-def test_detect_ball_returns_the_box_center(monkeypatch):
+def test_detect_ball_returns_the_box_center_and_size(monkeypatch):
     monkeypatch.setattr(ball, "_load_model", lambda: _FakeModel([_FakeBox((10, 10, 30, 30), 0.9)]))
     frame = np.zeros((100, 100, 3), dtype=np.uint8)
-    assert detect_ball(frame) == {"x": 0.2, "y": 0.2}
+    assert detect_ball(frame) == {"x": 0.2, "y": 0.2, "width": 0.2, "height": 0.2}
 
 
 def test_detect_ball_picks_the_highest_confidence_box(monkeypatch):
@@ -55,7 +55,7 @@ def test_detect_ball_picks_the_highest_confidence_box(monkeypatch):
         lambda: _FakeModel([_FakeBox((0, 0, 10, 10), 0.3), _FakeBox((80, 80, 100, 100), 0.9)]),
     )
     frame = np.zeros((100, 100, 3), dtype=np.uint8)
-    assert detect_ball(frame) == {"x": 0.9, "y": 0.9}
+    assert detect_ball(frame) == {"x": 0.9, "y": 0.9, "width": 0.2, "height": 0.2}
 
 
 def test_detect_ball_ignores_boxes_below_the_confidence_threshold(monkeypatch):
@@ -77,6 +77,8 @@ def test_detect_ball_with_a_trained_model_returns_a_normalized_point_or_none():
     result = detect_ball(frame)
     if result is None:
         return
-    assert set(result) == {"x", "y"}
+    assert set(result) == {"x", "y", "width", "height"}
     assert 0.0 <= result["x"] <= 1.0
     assert 0.0 <= result["y"] <= 1.0
+    assert 0.0 <= result["width"] <= 1.0
+    assert 0.0 <= result["height"] <= 1.0

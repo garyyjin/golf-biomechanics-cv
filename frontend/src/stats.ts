@@ -1,6 +1,6 @@
 import { rejectOutliers } from "./club";
 import type { ClubPoint } from "./club";
-import { midpoint, sideIndices, visiblePoint } from "./geometry";
+import { LEFT_HIP, LEFT_SHOULDER, RIGHT_HIP, RIGHT_SHOULDER, findAddressFrame, midpoint, sideIndices, visiblePoint } from "./geometry";
 import type { Point } from "./geometry";
 import { interpolateGaps } from "./phases";
 import type { SwingPhases } from "./phases";
@@ -8,10 +8,39 @@ import type { Handedness, PoseFrame } from "./types";
 
 // There's no way to know which club was actually used from video alone --
 // no depth/calibration reference exists in a single 2D camera. This is the
-// one assumption every number below inherits: a different real club length
+// one assumption every number below inherits when calibration falls all the
+// way back to it (see CalibrationSource): a different real club length
 // shifts clubhead speed (and everything derived from it) by that same
 // ratio. Driver length is the most common "how far did I hit it" context.
 export const ASSUMED_CLUB_LENGTH_INCHES = 45;
+
+// Regulation golf ball diameter (USGA/R&A minimum, effectively the
+// standard size in play) -- unlike club length, this is a genuine physical
+// constant rather than an assumption about which club the golfer swung, so
+// it's tried first as the distance-calibration reference whenever the
+// ball's detected box size gives a usable reading (see
+// inchesPerNormalizedUnitFromBall).
+export const GOLF_BALL_DIAMETER_INCHES = 1.68;
+
+// A detected ball's box aspect ratio (long side / short side) shouldn't
+// stray far from 1 -- a ball is round. A box significantly off square
+// usually means motion blur smeared the box along the direction of travel
+// (common just after impact), which would read as a bigger or smaller
+// "diameter" than the ball's true size depending on which axis it smeared
+// along. Rejecting those keeps the calibration reading anchored to clean,
+// blur-free detections -- typically found before the ball starts moving,
+// i.e. at address.
+const BALL_BOX_MAX_ASPECT_RATIO = 1.3;
+
+// Rough average adult torso length (mid-hip to mid-shoulder, inches), used
+// only as the last-resort calibration reference when neither the ball's box
+// size nor the grip-to-clubhead-at-address distance could be read from this
+// clip (see CalibrationSource). Real torso length varies by golfer -- this
+// is a population average, not a measurement -- but shoulder/hip landmarks
+// are already required for phase detection to have found address/impact at
+// all, so this keeps calibration (and therefore every number below) from
+// failing outright just because neither detector caught the ball or club.
+const ASSUMED_TORSO_LENGTH_INCHES = 20;
 
 // Typical smash factor (ball speed / clubhead speed) for a solid,
 // center-face driver strike. Real smash factor varies with strike quality
@@ -54,9 +83,11 @@ export function estimateCarryYards(ballSpeedMph: number): number {
   return Math.max(0, slopeYardsPerMph * clamped + interceptYards);
 }
 
-// Sanity bound: a clubhead-speed estimate outside this range means the
-// tracking (or the address-frame calibration it depends on) was almost
-// certainly bad for this swing, not that the golfer is superhuman.
+// Sanity ceiling: a clubhead-speed estimate above this means the tracking
+// (or the calibration it depends on) was almost certainly bad for this
+// swing, not that the golfer is superhuman. Used as a clamp rather than a
+// null-out (see computeFromSource) -- a bounded, directionally-reasonable
+// number still beats leaving the whole panel blank over one bad detection.
 const MAX_PLAUSIBLE_CLUBHEAD_MPH = 160;
 
 // How many frames on either side of impact to look for real (non-
@@ -100,6 +131,15 @@ export type SwingStatsDiagnostic =
   | { gate: "implausible-speed"; clubheadSpeedMph: number }
   | { gate: "ok" };
 
+/** Which real-world reference calibrated the pixel-to-inch scale a swing's
+ * numbers are built on -- tried in this order (see computeFromSource):
+ * "ball" (the detected ball's own box size against its known fixed
+ * diameter), "club-length" (grip-to-clubhead-at-address against
+ * ASSUMED_CLUB_LENGTH_INCHES), "body-proportion" (torso length against
+ * ASSUMED_TORSO_LENGTH_INCHES, the last resort). Null alongside all-null
+ * stats, when none of the three produced a scale. */
+export type CalibrationSource = "ball" | "club-length" | "body-proportion";
+
 export interface SwingStats {
   /** The fastest segment between two real (non-interpolated) detections
    * found near impact (see fastestAdjacentPair) -- deliberately not a
@@ -129,6 +169,9 @@ export interface SwingStats {
    * real carry also depends on strike quality and spin axis, neither
    * observable here. */
   estCarryYards: number | null;
+  /** See CalibrationSource's doc comment. Null alongside a null
+   * clubheadSpeedMph. */
+  calibrationSource: CalibrationSource | null;
 }
 
 const NULL_STATS: Omit<SwingStats, "diagnostic"> = {
@@ -136,6 +179,7 @@ const NULL_STATS: Omit<SwingStats, "diagnostic"> = {
   ballSpeedMph: null,
   ballSpeedSource: null,
   estCarryYards: null,
+  calibrationSource: null,
 };
 
 function gripPosition(landmarks: PoseFrame["landmarks"], handedness: Handedness): Point | null {
@@ -187,6 +231,69 @@ function inchesPerNormalizedUnit(
     const normalizedLength = distance(grip, point);
     if (normalizedLength < 1e-4) continue;
     return ASSUMED_CLUB_LENGTH_INCHES / normalizedLength;
+  }
+  return null;
+}
+
+/**
+ * Real-world scale from the ball's own detected box size -- a golf ball's
+ * diameter is a fixed real-world constant (GOLF_BALL_DIAMETER_INCHES), so
+ * unlike inchesPerNormalizedUnit above, this doesn't depend on which club
+ * was swung or on the clubhead being visible at address. Scans every frame
+ * in the clip (not just near address, since the ball's size reads the same
+ * whether it's sitting still or airborne) for a detection with a usable box
+ * size, discards ones whose box isn't roughly square (see
+ * BALL_BOX_MAX_ASPECT_RATIO -- motion blur elongates the box once the ball
+ * is moving), and takes the median normalized diameter across the rest --
+ * median rather than mean or first-hit so one unusually large/small stray
+ * reading can't skew the result.
+ */
+function inchesPerNormalizedUnitFromBall(frames: PoseFrame[]): number | null {
+  const diameters: number[] = [];
+  for (const f of frames) {
+    const box = f.ball_tip;
+    if (!box || box.width === undefined || box.height === undefined) continue;
+    const { width, height } = box;
+    if (width <= 0 || height <= 0) continue;
+    const aspect = width > height ? width / height : height / width;
+    if (aspect > BALL_BOX_MAX_ASPECT_RATIO) continue;
+    diameters.push((width + height) / 2);
+  }
+  if (diameters.length === 0) return null;
+  diameters.sort((a, b) => a - b);
+  const mid = Math.floor(diameters.length / 2);
+  const median = diameters.length % 2 === 0 ? (diameters[mid - 1] + diameters[mid]) / 2 : diameters[mid];
+  return GOLF_BALL_DIAMETER_INCHES / median;
+}
+
+/** Mid-shoulder-to-mid-hip distance for one frame's landmarks, or null if
+ * any of the four aren't visible -- the same torso-length idea geometry.ts's
+ * computeComparisonTransform and clubTipEstimate use, applied here as a
+ * real-world scale reference instead of a unitless normalization. */
+function torsoLength(landmarks: PoseFrame["landmarks"]): number | null {
+  if (!landmarks) return null;
+  const ls = visiblePoint(landmarks, LEFT_SHOULDER);
+  const rs = visiblePoint(landmarks, RIGHT_SHOULDER);
+  const lh = visiblePoint(landmarks, LEFT_HIP);
+  const rh = visiblePoint(landmarks, RIGHT_HIP);
+  if (!ls || !rs || !lh || !rh) return null;
+  return distance(midpoint(ls, rs), midpoint(lh, rh));
+}
+
+/**
+ * Real-world scale from an assumed average torso length
+ * (ASSUMED_TORSO_LENGTH_INCHES) -- the last-resort calibration reference
+ * when neither the ball's box size nor the grip-to-clubhead-at-address
+ * distance produced a scale. Searches the same address-centered window as
+ * inchesPerNormalizedUnit (shoulders/hips barely move there either) rather
+ * than requiring the exact address frame.
+ */
+function inchesPerNormalizedUnitFromTorso(frames: PoseFrame[], addressIndex: number): number | null {
+  const lo = Math.max(0, addressIndex - ADDRESS_CALIBRATION_WINDOW_FRAMES);
+  const hi = Math.min(frames.length - 1, addressIndex + ADDRESS_CALIBRATION_WINDOW_FRAMES);
+  for (let i = lo; i <= hi; i++) {
+    const length = torsoLength(frames[i].landmarks);
+    if (length !== null && length > 1e-4) return ASSUMED_TORSO_LENGTH_INCHES / length;
   }
   return null;
 }
@@ -258,15 +365,34 @@ function computeFromSource(
   if (address === null || impact === null) {
     return { stats: NULL_STATS, diagnostic: { gate: "phase-detection", address, impact } };
   }
-  if (impact <= 0 || impact >= frames.length - 1) {
+  // Only bails when there's genuinely no frame data to compute anything
+  // from (a 0- or 1-frame clip) -- impact sitting right at the clip's edge
+  // no longer blocks on its own, since the search windows below already
+  // clamp to the frames that actually exist, and no-detection-near-impact
+  // (also below) is what fires if that leaves nothing to measure.
+  if (frames.length < 2) {
     return { stats: NULL_STATS, diagnostic: { gate: "impact-at-clip-edge", impact, frameCount: frames.length } };
   }
 
   const real = rejectOutliers(frames.map(tip));
   const filled = gapFilledTrack(real);
 
-  const scale = inchesPerNormalizedUnit(frames, address, filled, handedness);
-  if (scale === null) {
+  // Tries three real-world scale references in order, each only attempted
+  // once the one before it fails: the ball's own detected size (a fixed
+  // physical constant, independent of club/camera framing), then the
+  // existing grip-to-clubhead-at-address distance, then an assumed average
+  // torso length as a last resort -- see each function's doc comment.
+  // Stacking all three like this is what makes the scale-calibration gate
+  // below effectively unreachable except when pose landmarks themselves are
+  // missing near address.
+  const ballScale = inchesPerNormalizedUnitFromBall(frames);
+  const clubScale = ballScale === null ? inchesPerNormalizedUnit(frames, address, filled, handedness) : null;
+  const torsoScale =
+    ballScale === null && clubScale === null ? inchesPerNormalizedUnitFromTorso(frames, address) : null;
+  const scale = ballScale ?? clubScale ?? torsoScale;
+  const calibrationSource: CalibrationSource | null =
+    ballScale !== null ? "ball" : clubScale !== null ? "club-length" : torsoScale !== null ? "body-proportion" : null;
+  if (scale === null || calibrationSource === null) {
     return { stats: NULL_STATS, diagnostic: { gate: "scale-calibration" } };
   }
 
@@ -275,13 +401,20 @@ function computeFromSource(
   // however wide the surrounding miss is, which would silently understate
   // impact speed rather than reporting it honestly as unavailable. Never
   // searches at or before address: the club is stationary there by
-  // definition, so it's never a legitimate impact-speed candidate.
-  const segment = fastestAdjacentPair(
-    frames,
-    real,
-    Math.max(address + 1, impact - IMPACT_SEARCH_WINDOW_FRAMES),
-    impact + IMPACT_SEARCH_WINDOW_FRAMES,
-  );
+  // definition, so it's never a legitimate impact-speed candidate. Tries a
+  // tight window around impact first (the fastest real segment there is the
+  // best available proxy for true peak speed -- see fastestAdjacentPair's
+  // doc comment), then falls back to searching the entire rest of the clip
+  // for any real adjacent pair at all, so a detector miss right around
+  // impact doesn't null the whole panel when a usable pair exists somewhere
+  // else in the swing.
+  const segment =
+    fastestAdjacentPair(
+      frames,
+      real,
+      Math.max(address + 1, impact - IMPACT_SEARCH_WINDOW_FRAMES),
+      impact + IMPACT_SEARCH_WINDOW_FRAMES,
+    ) ?? fastestAdjacentPair(frames, real, address + 1, frames.length - 1);
   if (!segment) {
     return { stats: NULL_STATS, diagnostic: { gate: "no-detection-near-impact", impact } };
   }
@@ -291,10 +424,15 @@ function computeFromSource(
   const seconds = frames[segment.afterIndex].t - frames[segment.beforeIndex].t;
 
   const inches = distance(before, after) * scale;
-  const clubheadSpeedMph = (inches / seconds) * (SECONDS_PER_HOUR / INCHES_PER_MILE);
-  if (clubheadSpeedMph <= 0 || clubheadSpeedMph > MAX_PLAUSIBLE_CLUBHEAD_MPH) {
-    return { stats: NULL_STATS, diagnostic: { gate: "implausible-speed", clubheadSpeedMph } };
+  const rawClubheadSpeedMph = (inches / seconds) * (SECONDS_PER_HOUR / INCHES_PER_MILE);
+  if (rawClubheadSpeedMph <= 0) {
+    return { stats: NULL_STATS, diagnostic: { gate: "implausible-speed", clubheadSpeedMph: rawClubheadSpeedMph } };
   }
+  // A reading above the plausible ceiling is almost always a bad detection
+  // somewhere in the swing rather than a real one, but clamping it to the
+  // ceiling still gives a bounded, directionally-reasonable number instead
+  // of leaving the whole panel blank (see MAX_PLAUSIBLE_CLUBHEAD_MPH).
+  const clubheadSpeedMph = Math.min(rawClubheadSpeedMph, MAX_PLAUSIBLE_CLUBHEAD_MPH);
 
   // Direction of clubhead travel around impact, as a fallback launch-angle
   // proxy -- not the ball's real launch angle, which also depends on
@@ -324,9 +462,60 @@ function computeFromSource(
   const estCarryYards = launchAngleRad > 0 ? estimateCarryYards(ballSpeedMph) : null;
 
   return {
-    stats: { clubheadSpeedMph, ballSpeedMph, ballSpeedSource, estCarryYards },
+    stats: { clubheadSpeedMph, ballSpeedMph, ballSpeedSource, estCarryYards, calibrationSource },
     diagnostic: { gate: "ok" },
   };
+}
+
+/**
+ * Ultimate fallback address/impact indices from raw wrist-position speed,
+ * used only when detectPhases (phases.ts) couldn't find a full swing shape
+ * at all -- too little visible motion, too few valid frames, or a noisy
+ * tail for its heuristics to trust. Address is just the first frame with any
+ * visible pose (same as geometry.ts's findAddressFrame); impact is
+ * approximated as the second frame of whichever consecutive pair of valid
+ * grip positions moved fastest anywhere in the clip -- a golf downswing is
+ * by far the fastest hand motion in a swing, so the single fastest
+ * frame-to-frame jump is still a reasonable proxy for "around impact" even
+ * without the full phase heuristic. Returns null if there's no visible pose
+ * anywhere, or fewer than two valid grip positions to compare.
+ */
+function estimatePhasesFromHandVelocity(
+  frames: PoseFrame[],
+  handedness: Handedness,
+): { address: number; impact: number } | null {
+  const addressFrame = findAddressFrame(frames);
+  if (!addressFrame) return null;
+  const addressIndex = frames.indexOf(addressFrame);
+
+  let best: { index: number; speed: number } | null = null;
+  let prevIndex: number | null = null;
+  let prevPoint: Point | null = null;
+  for (let i = 0; i < frames.length; i++) {
+    const point = gripPosition(frames[i].landmarks, handedness);
+    if (point && prevPoint !== null && prevIndex !== null) {
+      const seconds = frames[i].t - frames[prevIndex].t;
+      if (seconds > 0) {
+        const speed = distance(point, prevPoint) / seconds;
+        if (!best || speed > best.speed) best = { index: i, speed };
+      }
+    }
+    if (point) {
+      prevPoint = point;
+      prevIndex = i;
+    }
+  }
+  if (!best || best.index <= addressIndex) return null;
+  return { address: addressIndex, impact: best.index };
+}
+
+/** phases as-is when detectPhases found both address and impact; otherwise
+ * estimatePhasesFromHandVelocity's proxy substituted in for just those two
+ * fields, or phases unchanged if even that proxy found nothing. */
+function withPhaseFallback(frames: PoseFrame[], phases: SwingPhases, handedness: Handedness): SwingPhases {
+  if (phases.address !== null && phases.impact !== null) return phases;
+  const estimate = estimatePhasesFromHandVelocity(frames, handedness);
+  return estimate ? { ...phases, address: estimate.address, impact: estimate.impact } : phases;
 }
 
 /**
@@ -340,18 +529,25 @@ function computeFromSource(
  * from either alone doesn't null the whole panel (see computeFromSource);
  * the returned diagnostic reflects whichever attempt's failure is more
  * informative (YOLO's, since it's tried first and is the primary detector).
+ *
+ * When detectPhases itself couldn't find address/impact, falls back to
+ * estimatePhasesFromHandVelocity's raw-motion proxy rather than giving up
+ * immediately -- still best-effort arithmetic over existing data, just with
+ * a cruder notion of "when did the swing happen."
  */
 export function computeSwingStats(
   frames: PoseFrame[],
   phases: SwingPhases,
   handedness: Handedness,
 ): SwingStats {
-  const fromYolo = computeFromSource(frames, phases, handedness, (f) => f.club_tip_yolo ?? null);
+  const usablePhases = withPhaseFallback(frames, phases, handedness);
+
+  const fromYolo = computeFromSource(frames, usablePhases, handedness, (f) => f.club_tip_yolo ?? null);
   if (fromYolo.stats.clubheadSpeedMph !== null) {
     return { ...fromYolo.stats, diagnostic: fromYolo.diagnostic };
   }
 
-  const fromClassical = computeFromSource(frames, phases, handedness, (f) => f.club_tip ?? null);
+  const fromClassical = computeFromSource(frames, usablePhases, handedness, (f) => f.club_tip ?? null);
   if (fromClassical.stats.clubheadSpeedMph !== null) {
     return { ...fromClassical.stats, diagnostic: fromClassical.diagnostic };
   }

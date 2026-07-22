@@ -88,7 +88,8 @@ def test_analyze_video_includes_ball_tip_key(sample_video):
     # ball.pt installed, but don't pin None in case a model is present.
     assert all("ball_tip" in f for f in result["frames"])
     assert all(
-        f["ball_tip"] is None or set(f["ball_tip"]) == {"x", "y"} for f in result["frames"]
+        f["ball_tip"] is None or set(f["ball_tip"]) == {"x", "y", "width", "height"}
+        for f in result["frames"]
     )
 
 

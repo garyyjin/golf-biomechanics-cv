@@ -32,11 +32,16 @@ def _load_model() -> Any | None:
 
 def detect_ball(frame_bgr: Any) -> dict[str, float] | None:
     """Highest-confidence ball detection in this frame as a normalized [0,1]
-    {"x", "y"} box center, or None if no model is installed or nothing scored
-    above CONFIDENCE_THRESHOLD.
+    {"x", "y", "width", "height"} box, or None if no model is installed or
+    nothing scored above CONFIDENCE_THRESHOLD.
 
     Unlike detect_club, there's no hand-anchored tip/center distinction here
-    — a ball has no orientation, so the box center is the whole answer.
+    — a ball has no orientation, so the box center is the whole positional
+    answer. width/height (the box's normalized size) are included too, on
+    top of the {x, y} center every caller already expected — a golf ball's
+    real diameter is a known constant, so its on-screen box size doubles as
+    a distance-calibration reference (see frontend/src/stats.ts's
+    inchesPerNormalizedUnitFromBall) independent of which club was used.
     """
     model = _load_model()
     if model is None:
@@ -59,4 +64,9 @@ def detect_ball(frame_bgr: Any) -> dict[str, float] | None:
         return None
 
     x1, y1, x2, y2 = best_box
-    return {"x": (x1 + x2) / 2 / width, "y": (y1 + y2) / 2 / height}
+    return {
+        "x": (x1 + x2) / 2 / width,
+        "y": (y1 + y2) / 2 / height,
+        "width": (x2 - x1) / width,
+        "height": (y2 - y1) / height,
+    }
