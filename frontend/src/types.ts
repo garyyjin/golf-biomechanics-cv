@@ -1,6 +1,18 @@
 export type View = "face_on" | "down_the_line";
 export type Handedness = "right" | "left";
 export type Quality = "fast" | "accurate";
+// Which club the golfer swung, grouped into buckets that differ meaningfully
+// in length rather than one entry per iron number -- a user-selected real
+// length to calibrate distance against (see stats.ts's CLUB_LENGTH_INCHES),
+// replacing the old blanket "assume it's a driver" guess.
+export type ClubType =
+  | "driver"
+  | "fairway_wood"
+  | "hybrid"
+  | "long_iron"
+  | "mid_iron"
+  | "short_iron"
+  | "wedge";
 
 export interface Landmark {
   x: number;

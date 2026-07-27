@@ -6,13 +6,14 @@ import { LibraryScreen } from "./LibraryScreen";
 import { PlayerScreen } from "./PlayerScreen";
 import { useTheme } from "./theme";
 import { UploadScreen } from "./UploadScreen";
-import type { AnalysisResponse } from "./types";
+import type { AnalysisResponse, ClubType } from "./types";
 
 type Screen = "upload" | "player" | "library";
 
 interface Session {
   videoUrl: string;
   analysis: AnalysisResponse;
+  club: ClubType;
 }
 
 export default function App() {
@@ -29,8 +30,8 @@ export default function App() {
     setBenchmarks(await loadBenchmarks());
   }
 
-  function handleAnalyzed(file: File, analysis: AnalysisResponse) {
-    setSession({ videoUrl: URL.createObjectURL(file), analysis });
+  function handleAnalyzed(file: File, analysis: AnalysisResponse, club: ClubType) {
+    setSession({ videoUrl: URL.createObjectURL(file), analysis, club });
     setScreen("player");
   }
 
@@ -83,6 +84,7 @@ export default function App() {
           videoUrl={session.videoUrl}
           analysis={session.analysis}
           benchmarks={benchmarks}
+          club={session.club}
           onReset={handleReset}
         />
       ) : (

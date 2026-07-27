@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { analyzeVideo, pollAnalysisJob } from "./api";
 import { FileField } from "./FileField";
-import type { AnalysisResponse, Handedness, Quality, View } from "./types";
+import { CLUB_LABELS } from "./stats";
+import type { AnalysisResponse, ClubType, Handedness, Quality, View } from "./types";
 
 interface Props {
-  onAnalyzed: (file: File, analysis: AnalysisResponse) => void;
+  onAnalyzed: (file: File, analysis: AnalysisResponse, club: ClubType) => void;
 }
 
 const VIEW_OPTIONS: { value: View; label: string }[] = [
@@ -22,11 +23,22 @@ const QUALITY_OPTIONS: { value: Quality; label: string }[] = [
   { value: "accurate", label: "Accurate" },
 ];
 
+const CLUB_OPTIONS: { value: ClubType; label: string }[] = (
+  Object.keys(CLUB_LABELS) as ClubType[]
+).map((value) => ({ value, label: CLUB_LABELS[value] }));
+
 export function UploadScreen({ onAnalyzed }: Props) {
   const [file, setFile] = useState<File | null>(null);
   const [view, setView] = useState<View | null>(null);
   const [handedness, setHandedness] = useState<Handedness | null>(null);
   const [quality, setQuality] = useState<Quality | null>(null);
+  // Defaults to "driver" rather than requiring a pick -- unlike view/
+  // handedness/quality, there's a sensible universal default here, so
+  // requiring an explicit choice before every upload would just be friction
+  // for the common case. The stats panel's calibration caption always names
+  // whichever club actually calibrated the reading, so a forgotten default
+  // is visible after the fact rather than silently assumed.
+  const [club, setClub] = useState<ClubType>("driver");
   const [processing, setProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -43,7 +55,7 @@ export function UploadScreen({ onAnalyzed }: Props) {
     setJobId(null);
     try {
       const analysis = await analyzeVideo(file, view, handedness, quality, setProgress, setJobId);
-      onAnalyzed(file, analysis);
+      onAnalyzed(file, analysis, club);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Analysis failed");
       setProcessing(false);
@@ -59,7 +71,7 @@ export function UploadScreen({ onAnalyzed }: Props) {
     setError(null);
     try {
       const analysis = await pollAnalysisJob(jobId, setProgress);
-      onAnalyzed(file, analysis);
+      onAnalyzed(file, analysis, club);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Analysis failed");
       setProcessing(false);
@@ -136,6 +148,28 @@ export function UploadScreen({ onAnalyzed }: Props) {
             </button>
           ))}
         </div>
+      </div>
+
+      <div className="field">
+        <span>Club used</span>
+        <div className="toggle-group" role="radiogroup" aria-label="Club used">
+          {CLUB_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              className={club === opt.value ? "toggle selected" : "toggle"}
+              aria-pressed={club === opt.value}
+              disabled={processing}
+              onClick={() => setClub(opt.value)}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+        <p className="hint">
+          Used to calibrate distance from tracking when the ball's own size isn't visible enough
+          to calibrate from instead.
+        </p>
       </div>
 
       <button type="button" className="submit" disabled={!ready} onClick={submit}>

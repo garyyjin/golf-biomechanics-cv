@@ -53,7 +53,9 @@ library of reference swings to see whether they fall inside a normal range.
   value, the target range, and a plain-English coaching tip. Clicking a
   feedback row seeks the video to that phase.
 - Benchmark ranges come from published defaults out of the box, and are
-  replaced by **empirical benchmarks** (mean ± 1 std per view/phase/metric)
+  replaced by **empirical benchmarks** (the observed min/max per
+  view/phase/metric across your reference swing library, so every swing
+  that contributed a sample always falls within its own computed range)
   aggregated from your own reference swing library as you add swings —
   each row labels which source it used.
 - A normalized skeleton comparison diagram overlays your pose on the
@@ -218,4 +220,4 @@ npm test
 | `GET` | `/reference-swings/{id}/video` | Fetch a reference swing's video file. |
 | `GET` | `/reference-swings/{id}/analysis` | Fetch a reference swing's stored per-frame analysis. |
 | `POST` | `/reference-swings/{id}/samples` | Save per-phase metric samples for a reference swing and recompute benchmarks. |
-| `GET` | `/benchmarks` | Get the current benchmark ranges (mean ± 1 std per view/phase/metric). |
+| `GET` | `/benchmarks` | Get the current benchmark ranges (observed min/max per view/phase/metric). |

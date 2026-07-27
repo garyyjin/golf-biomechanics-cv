@@ -104,9 +104,14 @@ def test_samples_below_threshold_not_included(sample_video):
     assert response.json()["table"]["face_on"].get("top") is None
 
 
-def test_samples_mean_std_math_and_threshold(sample_video):
+def test_samples_range_is_observed_min_max_and_threshold(sample_video):
+    # Deliberately asymmetric around the mean (80) -- a mean +/- 1 stdev
+    # range would come out as roughly [68.7, 91.3], excluding the sample at
+    # 65.0 entirely. The range is the actual observed min/max instead, so
+    # every one of these samples -- including that one -- falls within its
+    # own computed range.
     ids = [upload(sample_video).json()["id"] for _ in range(3)]
-    values = [80.0, 85.0, 90.0]
+    values = [65.0, 82.0, 93.0]
     for entry_id, value in zip(ids, values):
         response = client.post(
             f"/reference-swings/{entry_id}/samples",
@@ -117,8 +122,8 @@ def test_samples_mean_std_math_and_threshold(sample_video):
     assert len(entries) == 1
     assert entries[0]["metric"] == "shoulderTurn"
     assert entries[0]["sampleSize"] == 3
-    assert entries[0]["range"]["min"] == pytest.approx(80.0)
-    assert entries[0]["range"]["max"] == pytest.approx(90.0)
+    assert entries[0]["range"]["min"] == pytest.approx(65.0)
+    assert entries[0]["range"]["max"] == pytest.approx(93.0)
 
 
 def test_delete_drops_group_below_threshold(sample_video):

@@ -4,15 +4,36 @@ import { LEFT_HIP, LEFT_SHOULDER, RIGHT_HIP, RIGHT_SHOULDER, findAddressFrame, m
 import type { Point } from "./geometry";
 import { interpolateGaps } from "./phases";
 import type { SwingPhases } from "./phases";
-import type { Handedness, PoseFrame } from "./types";
+import type { ClubType, Handedness, PoseFrame } from "./types";
 
-// There's no way to know which club was actually used from video alone --
-// no depth/calibration reference exists in a single 2D camera. This is the
-// one assumption every number below inherits when calibration falls all the
-// way back to it (see CalibrationSource): a different real club length
-// shifts clubhead speed (and everything derived from it) by that same
-// ratio. Driver length is the most common "how far did I hit it" context.
-export const ASSUMED_CLUB_LENGTH_INCHES = 45;
+// Real-world club lengths (inches) by bucket, used to calibrate distance
+// when the club-length method is the one that fires (see CalibrationSource)
+// -- picked by the golfer as an upload-time input (UploadScreen.tsx) rather
+// than assumed, since there's no way to tell which club was actually used
+// from video alone. Bucketed by length rather than one entry per iron number
+// -- adjacent irons differ by half an inch, not enough to matter for a
+// clubhead-speed estimate, and a shorter list is easier to pick from
+// correctly than a precise one nobody remembers exactly. Values are
+// standard men's steel-shaft lengths for each bucket's midpoint club.
+export const CLUB_LENGTH_INCHES: Record<ClubType, number> = {
+  driver: 45,
+  fairway_wood: 43,
+  hybrid: 40,
+  long_iron: 39,
+  mid_iron: 37.5,
+  short_iron: 36,
+  wedge: 35,
+};
+
+export const CLUB_LABELS: Record<ClubType, string> = {
+  driver: "Driver",
+  fairway_wood: "Fairway wood (3W/5W)",
+  hybrid: "Hybrid",
+  long_iron: "Long iron (2–4)",
+  mid_iron: "Mid iron (5–7)",
+  short_iron: "Short iron (8–9/PW)",
+  wedge: "Wedge (GW/SW/LW)",
+};
 
 // Regulation golf ball diameter (USGA/R&A minimum, effectively the
 // standard size in play) -- unlike club length, this is a genuine physical
@@ -58,8 +79,10 @@ const SECONDS_PER_HOUR = 3600;
 // captured with a camera-based launch monitor. r^2 = 0.84. Regenerate with
 // `backend/training/calibrate_carry.py`. This replaces a no-spin/no-drag
 // projectile-motion formula with a driver-shaped real-world relationship;
-// it still assumes a driver strike, matching ASSUMED_CLUB_LENGTH_INCHES.
-// CaddieSet has no clubhead-speed column, so it can't calibrate
+// it still assumes driver-like carry behavior regardless of which club the
+// golfer actually selected for CLUB_LENGTH_INCHES calibration above --
+// CaddieSet has no per-club carry curves to fit against instead. CaddieSet
+// also has no clubhead-speed column, so it can't calibrate
 // ASSUMED_SMASH_FACTOR above -- only this carry step, and it's equally
 // valid whether the ball speed fed into it was measured or estimated.
 export const DRIVER_CARRY_REGRESSION = {
@@ -134,10 +157,10 @@ export type SwingStatsDiagnostic =
 /** Which real-world reference calibrated the pixel-to-inch scale a swing's
  * numbers are built on -- tried in this order (see computeFromSource):
  * "ball" (the detected ball's own box size against its known fixed
- * diameter), "club-length" (grip-to-clubhead-at-address against
- * ASSUMED_CLUB_LENGTH_INCHES), "body-proportion" (torso length against
- * ASSUMED_TORSO_LENGTH_INCHES, the last resort). Null alongside all-null
- * stats, when none of the three produced a scale. */
+ * diameter), "club-length" (grip-to-clubhead-at-address against the
+ * user-selected club's length in CLUB_LENGTH_INCHES), "body-proportion"
+ * (torso length against ASSUMED_TORSO_LENGTH_INCHES, the last resort). Null
+ * alongside all-null stats, when none of the three produced a scale. */
 export type CalibrationSource = "ball" | "club-length" | "body-proportion";
 
 export interface SwingStats {
@@ -150,8 +173,9 @@ export interface SwingStats {
    * detector first, falling back to the classical detector if YOLO alone
    * couldn't produce a result (see computeFromSource) -- a miss from one
    * detector no longer nulls the whole panel. Accuracy still depends
-   * entirely on detector quality and the assumed club length, but it's not
-   * a further-derived guess like the two below. */
+   * entirely on detector quality and calibration accuracy (see
+   * CalibrationSource), but it's not a further-derived guess like the two
+   * below. */
   clubheadSpeedMph: number | null;
   /** Measured directly from the ball's own tracked displacement just after
    * impact when a ball detection exists (see ballSpeedSource); otherwise
@@ -163,11 +187,11 @@ export interface SwingStats {
    * ballSpeedMph. */
   ballSpeedSource: "measured" | "estimated" | null;
   /** ballSpeedMph run through DRIVER_CARRY_REGRESSION (an empirical
-   * driver-carry curve fit on real shots), gated on a positive launch-angle
-   * proxy -- a level or downward impact direction is treated as a mishit
-   * and yields null rather than a fabricated number. Still an estimate:
-   * real carry also depends on strike quality and spin axis, neither
-   * observable here. */
+   * driver-carry curve fit on real shots) -- always forced to a number
+   * alongside clubheadSpeedMph/ballSpeedMph, same "never block" policy as
+   * the rest of SwingStats. Still an estimate: real carry also depends on
+   * launch angle, strike quality, and spin axis, none reliably observable
+   * here. */
   estCarryYards: number | null;
   /** See CalibrationSource's doc comment. Null alongside a null
    * clubheadSpeedMph. */
@@ -210,16 +234,19 @@ function gapFilledTrack(real: (ClubPoint | null)[]): (ClubPoint | null)[] {
 /**
  * Real-world scale (inches per normalized-distance unit), anchored on a
  * grip-to-clubhead distance near the address frame standing in for
- * ASSUMED_CLUB_LENGTH_INCHES -- the only real-world reference available
- * without a depth camera or a calibration object in frame. Searches
- * ADDRESS_CALIBRATION_WINDOW_FRAMES on either side of address (see its doc
- * comment) rather than requiring a detection on that exact frame.
+ * clubLengthInches (the user-selected club's real length, see
+ * CLUB_LENGTH_INCHES) -- the only real-world reference available without a
+ * depth camera or a calibration object in frame, once the ball's own size
+ * isn't. Searches ADDRESS_CALIBRATION_WINDOW_FRAMES on either side of
+ * address (see its doc comment) rather than requiring a detection on that
+ * exact frame.
  */
 function inchesPerNormalizedUnit(
   frames: PoseFrame[],
   addressIndex: number,
   filledTrack: (ClubPoint | null)[],
   handedness: Handedness,
+  clubLengthInches: number,
 ): number | null {
   const grip = gripPosition(frames[addressIndex].landmarks, handedness);
   if (!grip) return null;
@@ -230,7 +257,7 @@ function inchesPerNormalizedUnit(
     if (!point) continue;
     const normalizedLength = distance(grip, point);
     if (normalizedLength < 1e-4) continue;
-    return ASSUMED_CLUB_LENGTH_INCHES / normalizedLength;
+    return clubLengthInches / normalizedLength;
   }
   return null;
 }
@@ -359,6 +386,7 @@ function computeFromSource(
   frames: PoseFrame[],
   phases: SwingPhases,
   handedness: Handedness,
+  club: ClubType,
   tip: (f: PoseFrame) => ClubPoint | null,
 ): SourceResult {
   const { address, impact } = phases;
@@ -386,7 +414,10 @@ function computeFromSource(
   // below effectively unreachable except when pose landmarks themselves are
   // missing near address.
   const ballScale = inchesPerNormalizedUnitFromBall(frames);
-  const clubScale = ballScale === null ? inchesPerNormalizedUnit(frames, address, filled, handedness) : null;
+  const clubScale =
+    ballScale === null
+      ? inchesPerNormalizedUnit(frames, address, filled, handedness, CLUB_LENGTH_INCHES[club])
+      : null;
   const torsoScale =
     ballScale === null && clubScale === null ? inchesPerNormalizedUnitFromTorso(frames, address) : null;
   const scale = ballScale ?? clubScale ?? torsoScale;
@@ -434,13 +465,6 @@ function computeFromSource(
   // of leaving the whole panel blank (see MAX_PLAUSIBLE_CLUBHEAD_MPH).
   const clubheadSpeedMph = Math.min(rawClubheadSpeedMph, MAX_PLAUSIBLE_CLUBHEAD_MPH);
 
-  // Direction of clubhead travel around impact, as a fallback launch-angle
-  // proxy -- not the ball's real launch angle, which also depends on
-  // dynamic loft and spin (neither observable here). y grows downward in
-  // image space. Overridden below by the ball's own direction whenever a
-  // real ball measurement exists.
-  let launchAngleRad = Math.atan2(-(after.y - before.y), Math.abs(after.x - before.x));
-
   const realBall = rejectOutliers(frames.map((f) => f.ball_tip ?? null));
   const ballSegment = fastestAdjacentPair(frames, realBall, impact, impact + BALL_SEARCH_WINDOW_FRAMES);
 
@@ -453,13 +477,18 @@ function computeFromSource(
     const ballInches = distance(ballBefore, ballAfter) * scale;
     ballSpeedMph = (ballInches / ballSeconds) * (SECONDS_PER_HOUR / INCHES_PER_MILE);
     ballSpeedSource = "measured";
-    launchAngleRad = Math.atan2(-(ballAfter.y - ballBefore.y), Math.abs(ballAfter.x - ballBefore.x));
   } else {
     ballSpeedMph = clubheadSpeedMph * ASSUMED_SMASH_FACTOR;
     ballSpeedSource = "estimated";
   }
 
-  const estCarryYards = launchAngleRad > 0 ? estimateCarryYards(ballSpeedMph) : null;
+  // Always forced from ballSpeedMph -- no launch-angle gate to null it out
+  // for a level/downward-looking direction reading, since that reading is
+  // itself just a rough proxy (frame-to-frame direction, not a real launch
+  // angle) and not reliable enough to justify blanking the whole estimate
+  // over. estimateCarryYards' own clamping keeps this bounded and
+  // non-negative regardless of how extreme ballSpeedMph is.
+  const estCarryYards = estimateCarryYards(ballSpeedMph);
 
   return {
     stats: { clubheadSpeedMph, ballSpeedMph, ballSpeedSource, estCarryYards, calibrationSource },
@@ -534,20 +563,27 @@ function withPhaseFallback(frames: PoseFrame[], phases: SwingPhases, handedness:
  * estimatePhasesFromHandVelocity's raw-motion proxy rather than giving up
  * immediately -- still best-effort arithmetic over existing data, just with
  * a cruder notion of "when did the swing happen."
+ *
+ * `club` (the golfer's own upload-time selection, see UploadScreen.tsx)
+ * only matters when calibration falls back to the club-length method --
+ * defaults to "driver" so existing callers/tests that don't pass one keep
+ * the previous universal assumption, but real callers always pass the
+ * user's actual selection.
  */
 export function computeSwingStats(
   frames: PoseFrame[],
   phases: SwingPhases,
   handedness: Handedness,
+  club: ClubType = "driver",
 ): SwingStats {
   const usablePhases = withPhaseFallback(frames, phases, handedness);
 
-  const fromYolo = computeFromSource(frames, usablePhases, handedness, (f) => f.club_tip_yolo ?? null);
+  const fromYolo = computeFromSource(frames, usablePhases, handedness, club, (f) => f.club_tip_yolo ?? null);
   if (fromYolo.stats.clubheadSpeedMph !== null) {
     return { ...fromYolo.stats, diagnostic: fromYolo.diagnostic };
   }
 
-  const fromClassical = computeFromSource(frames, usablePhases, handedness, (f) => f.club_tip ?? null);
+  const fromClassical = computeFromSource(frames, usablePhases, handedness, club, (f) => f.club_tip ?? null);
   if (fromClassical.stats.clubheadSpeedMph !== null) {
     return { ...fromClassical.stats, diagnostic: fromClassical.diagnostic };
   }

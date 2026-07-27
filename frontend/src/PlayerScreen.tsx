@@ -27,18 +27,19 @@ import { SwingScoreBadge } from "./SwingScoreBadge";
 import { computeSwingScore } from "./swingScore";
 import { computeTempoScore, describeTempoRatio } from "./tempo";
 import type { TempoScore, TempoSegment } from "./tempo";
-import type { AnalysisResponse } from "./types";
+import type { AnalysisResponse, ClubType } from "./types";
 
 interface Props {
   videoUrl: string;
   analysis: AnalysisResponse;
   benchmarks: BenchmarkTable;
+  club: ClubType;
   onReset: () => void;
 }
 
 const SPEED_OPTIONS = [0.25, 0.5, 1] as const;
 
-export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props) {
+export function PlayerScreen({ videoUrl, analysis, benchmarks, club, onReset }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererStateRef = useRef(createOverlayRenderState());
@@ -267,8 +268,8 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
   const feedback = useMemo(() => computeFeedback(analysis, benchmarks), [analysis, benchmarks]);
   const swingScore = useMemo(() => computeSwingScore(feedback), [feedback]);
   const swingStats = useMemo(
-    () => computeSwingStats(frames, feedback.phases, handedness),
-    [frames, feedback.phases, handedness],
+    () => computeSwingStats(frames, feedback.phases, handedness, club),
+    [frames, feedback.phases, handedness, club],
   );
 
   // Down-the-line footage is most accurate when the camera sits directly on
@@ -708,7 +709,7 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
         >
           <SwingScoreBadge score={swingScore} />
 
-          <StatsPanel stats={swingStats} />
+          <StatsPanel stats={swingStats} club={club} />
 
           <aside className="readout-panel">
             <h2>{view === "face_on" ? "Face-on" : "Down-the-line"}</h2>

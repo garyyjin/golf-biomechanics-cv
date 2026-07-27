@@ -241,16 +241,42 @@ describe("computeSwingStats", () => {
     expect(stats.clubheadSpeedMph).toBeNull();
   });
 
-  it("does not estimate a carry distance for a purely horizontal or downward impact direction", () => {
+  it("still forces a carry estimate for a purely horizontal or downward impact direction", () => {
+    // A level/downward travel direction used to null out carry as a presumed
+    // mishit; it's now forced the same as clubhead/ball speed, since the
+    // direction reading is just a rough proxy, not reliable enough to
+    // justify blanking the estimate over.
     const frames = [
       frame(0, 0, ADDRESS_LANDMARKS, { x: 0.5, y: 0.8 }),
       frame(1, 1, null, { x: 0.4, y: 0.6 }),
       frame(2, 2),
-      frame(3, 3, null, { x: 0.6, y: 0.6 }), // purely horizontal travel -> 0 launch angle -> 0 range
+      frame(3, 3, null, { x: 0.6, y: 0.6 }), // purely horizontal travel
     ];
     const phases = { ...NO_PHASES, address: 0, impact: 2 };
     const stats = computeSwingStats(frames, phases, "right");
-    expect(stats.estCarryYards).toBeNull();
+    expect(stats.estCarryYards).not.toBeNull();
+    expect(stats.estCarryYards!).toBeGreaterThan(0);
+  });
+
+  it("calibrates against the selected club's length instead of always assuming a driver", () => {
+    // Same tracked geometry as the estimated-ball-speed test above; only the
+    // selected club differs, so the reading should scale proportionally to
+    // each club's assumed length (45in driver vs 35in wedge) rather than
+    // always assuming a 45in driver regardless of what the golfer picked.
+    const frames = [
+      frame(0, 0, ADDRESS_LANDMARKS, { x: 0.5, y: 0.8 }),
+      frame(1, 1, null, { x: 0.45, y: 0.8 }),
+      frame(2, 2),
+      frame(3, 3, null, { x: 0.55, y: 0.6 }),
+    ];
+    const phases = { ...NO_PHASES, address: 0, impact: 2 };
+
+    const driverStats = computeSwingStats(frames, phases, "right", "driver");
+    const wedgeStats = computeSwingStats(frames, phases, "right", "wedge");
+
+    expect(driverStats.calibrationSource).toBe("club-length");
+    expect(wedgeStats.calibrationSource).toBe("club-length");
+    expect(wedgeStats.clubheadSpeedMph!).toBeCloseTo(driverStats.clubheadSpeedMph! * (35 / 45), 6);
   });
 
   it("calibrates from the ball's own detected size when the clubhead was never tracked near address", () => {

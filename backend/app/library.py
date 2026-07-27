@@ -15,7 +15,6 @@ this module's output carries bare metric ids, not human-readable labels.
 import json
 import os
 import shutil
-import statistics
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,7 +24,6 @@ from app.pose import analyze_video
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
 MIN_SAMPLES_FOR_RANGE = 3
-RANGE_WIDTH_STD = 1
 
 
 def _entries_dir() -> Path:
@@ -186,13 +184,21 @@ def recompute_benchmarks() -> dict:
     for (view, phase, metric), values in groups.items():
         if len(values) < MIN_SAMPLES_FOR_RANGE:
             continue
-        avg = statistics.mean(values)
-        std = statistics.stdev(values)
+        # The actual min/max the library's own swings produced, not a
+        # mean +/- 1 stdev confidence interval -- with only a handful of
+        # reference swings (this is a small personal library, not a large
+        # statistical sample), +/- 1 stdev routinely excludes some of the
+        # very swings used to compute it (a normal distribution only puts
+        # ~68% of samples within 1 stdev of the mean, and that gets worse
+        # with fewer samples), which read as "even my own good reference
+        # swing doesn't fall in its own good range." Using the observed
+        # range instead guarantees every swing that contributed a sample
+        # scores within range for that metric/phase, by construction.
         phase_entries = table[view].setdefault(phase, [])
         phase_entries.append(
             {
                 "metric": metric,
-                "range": {"min": avg - RANGE_WIDTH_STD * std, "max": avg + RANGE_WIDTH_STD * std},
+                "range": {"min": min(values), "max": max(values)},
                 "sampleSize": len(values),
             }
         )

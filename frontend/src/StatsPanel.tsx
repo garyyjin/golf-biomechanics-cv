@@ -1,10 +1,11 @@
-import { ASSUMED_CLUB_LENGTH_INCHES } from "./stats";
+import { CLUB_LABELS, CLUB_LENGTH_INCHES } from "./stats";
 import type { SwingStats } from "./stats";
+import type { ClubType } from "./types";
 
 /** Which real-world reference calibrated this swing's numbers, in plain
  * language -- see CalibrationSource's doc comment in stats.ts for the tier
  * order (ball size, then club length, then body proportion). */
-function calibrationCaption(stats: SwingStats): string {
+function calibrationCaption(stats: SwingStats, club: ClubType): string {
   switch (stats.calibrationSource) {
     case "ball":
       return "Clubhead speed is measured from tracking, calibrated against the ball's own size in frame (a fixed, known diameter) rather than a guess about your club.";
@@ -12,12 +13,13 @@ function calibrationCaption(stats: SwingStats): string {
       return "Clubhead speed is measured from tracking, calibrated against an assumed average body proportion since neither the ball nor a clear clubhead-at-address view was available — treat this reading as rougher than usual.";
     case "club-length":
     case null:
-      return `Clubhead speed is measured from tracking, assuming a ${ASSUMED_CLUB_LENGTH_INCHES}in club (there's no way to know your actual club from video).`;
+      return `Clubhead speed is measured from tracking, calibrated against your selected club (${CLUB_LABELS[club]}, assumed ${CLUB_LENGTH_INCHES[club]}in).`;
   }
 }
 
 interface StatsPanelProps {
   stats: SwingStats;
+  club: ClubType;
 }
 
 /** Plain-language explanation for why the panel has nothing to show,
@@ -42,7 +44,7 @@ function nullReasonCaption(stats: SwingStats): string {
   }
 }
 
-export function StatsPanel({ stats }: StatsPanelProps) {
+export function StatsPanel({ stats, club }: StatsPanelProps) {
   const hasStats = stats.clubheadSpeedMph !== null;
 
   return (
@@ -79,7 +81,7 @@ export function StatsPanel({ stats }: StatsPanelProps) {
         <p className="stats-caption">{nullReasonCaption(stats)}</p>
       )}
       <p className="stats-caption">
-        {calibrationCaption(stats)}{" "}
+        {calibrationCaption(stats, club)}{" "}
         {stats.ballSpeedSource === "measured"
           ? "Ball speed is measured from tracking the ball itself just after impact; carry distance is still a rough estimate derived from it."
           : "Ball speed and carry distance are rough estimates derived from clubhead speed alone — they assume a solid, center-face strike and ignore spin and drag entirely, so treat them as directional, not exact."}{" "}
