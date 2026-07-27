@@ -69,7 +69,7 @@ def test_analyze_ok(sample_video):
         club_tip_yolo = frame["club_tip_yolo"]
         assert club_tip_yolo is None or set(club_tip_yolo) == {"x", "y"}
         ball_tip = frame["ball_tip"]
-        assert ball_tip is None or set(ball_tip) == {"x", "y"}
+        assert ball_tip is None or set(ball_tip) == {"x", "y", "width", "height"}
 
 
 def test_missing_view_422(sample_video):
@@ -118,7 +118,7 @@ def test_analyze_accurate_quality_ok(sample_video):
         club_tip_yolo = frame["club_tip_yolo"]
         assert club_tip_yolo is None or set(club_tip_yolo) == {"x", "y"}
         ball_tip = frame["ball_tip"]
-        assert ball_tip is None or set(ball_tip) == {"x", "y"}
+        assert ball_tip is None or set(ball_tip) == {"x", "y", "width", "height"}
 
 
 def test_bad_extension_422(tmp_path):

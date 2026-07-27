@@ -196,10 +196,15 @@ def analyze_video(
     detect_club can return the clubhead's tip (farthest box corner) rather
     than its center; with no landmarks this frame, it falls back to center.
 
-    Also carries ball_tip — a {x, y} normalized ball-center point from a
-    separate per-frame YOLOv8n ball detector (see app/ball.py). Always None
-    until backend/app/models/ball.pt exists. Only meaningful around and
-    after impact; the frontend (stats.ts) only ever searches for it there.
+    Also carries ball_tip — a {x, y, width, height} normalized ball box from
+    a separate per-frame YOLOv8n ball detector (see app/ball.py), where
+    width/height are the box's normalized size (the frontend uses these for
+    distance calibration off the ball's known real diameter — see stats.ts's
+    inchesPerNormalizedUnitFromBall). Always None until
+    backend/app/models/ball.pt exists. Position is only meaningful around and
+    after impact; the frontend (stats.ts) only ever searches for the ball's
+    *position* there, though its *size* is scanned across the whole clip for
+    calibration.
 
     on_progress(current_index, total_frames), if given, is called after each
     frame is processed — total_frames comes from CAP_PROP_FRAME_COUNT, which
