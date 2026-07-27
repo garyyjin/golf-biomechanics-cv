@@ -25,6 +25,12 @@ export interface PoseFrame {
   // null/absent until backend/app/models/clubhead.pt exists (no trained
   // weights yet). Optional for the same reason as club_tip.
   club_tip_yolo?: { x: number; y: number } | null;
+  // Normalized [0,1] ball-center point from a per-frame YOLOv8n ball
+  // detector (see backend/app/ball.py). Only meaningful around and after
+  // impact -- the ball isn't a moving target before then. Null/absent when
+  // no model is installed or nothing was detected this frame. Optional so
+  // fixtures/analyses from before this field existed still typecheck.
+  ball_tip?: { x: number; y: number } | null;
 }
 
 export interface AnalysisResponse {

@@ -248,11 +248,11 @@ export function drawClubTracer(
   strokeTrailSegment(ctx, backswing, cssWidth, cssHeight, CLUB_TRACER_COLOR, lineWidth);
   strokeTrailSegment(ctx, downswing, cssWidth, cssHeight, CLUB_DOWNSWING_COLOR, lineWidth);
 
-  // The tip marker deliberately uses the raw (unsmoothed) last point, not
-  // `smoothed` -- it's the live tracked position while the trail is still
-  // extending, and averaging it in with past points would lag it behind the
-  // actual clubhead the same way over-smoothing PointSmoother would.
-  const tip = trail[trail.length - 1];
+  // The tip marker uses the same spatially-smoothed trail as the stroked
+  // segments -- near the live end the averaging window only has past points
+  // to draw from (there's no future to look ahead to yet), so it damps
+  // detector jitter without meaningfully lagging behind the real clubhead.
+  const tip = smoothed[smoothed.length - 1];
   const tipColor = topIndex !== null && tip.frameIndex > topIndex ? CLUB_DOWNSWING_COLOR : CLUB_TRACER_COLOR;
   const [r, g, b] = tipColor;
   ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.95)`;

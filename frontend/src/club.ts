@@ -39,8 +39,14 @@ function distance(a: ClubPoint, b: ClubPoint): number {
  * continues the path its neighbors describe even at its fastest. Treating
  * it the same as a miss lets fillClubGaps' existing interpolation bridge
  * over it instead of drawing the tracer through it.
+ *
+ * Exported separately from fillClubGaps so stats.ts can search for the
+ * nearest *real* detection around impact -- fillClubGaps' interpolated
+ * points are a straight-line average across however wide the surrounding
+ * gap is, which understates the true speed at any single fast-moving
+ * instant inside it (impact, chiefly).
  */
-function rejectOutliers(points: (ClubPoint | null)[]): (ClubPoint | null)[] {
+export function rejectOutliers(points: (ClubPoint | null)[]): (ClubPoint | null)[] {
   const result = [...points];
   for (let i = 0; i < result.length; i++) {
     const point = result[i];
@@ -71,12 +77,16 @@ function rejectOutliers(points: (ClubPoint | null)[]): (ClubPoint | null)[] {
  * rather than extrapolating a guess. Lone false detections (see
  * rejectOutliers) are treated as gaps too, before interpolation runs.
  *
- * Operates on club_tip_yolo (the experimental per-frame YOLOv8n detector,
- * see backend/app/club.py) — not club_tip, the existing Hough-line
- * detection already consumed directly by overlayRenderer.ts.
+ * Prefers club_tip_yolo (the per-frame YOLOv8n detector, see
+ * backend/app/club.py) per frame, falling back to club_tip (the classical
+ * Hough-line detection) only on frames where YOLO has nothing -- a single
+ * miss from one detector no longer breaks the drawn trail for that frame.
+ * This is a display-only fusion: stats.ts's speed math deliberately keeps
+ * the two detectors' real (non-interpolated) points separate instead of
+ * mixing them within one measurement (see computeFromSource).
  */
 export function fillClubGaps(frames: PoseFrame[]): (ClubPoint | null)[] {
-  const cleaned = rejectOutliers(frames.map((f) => f.club_tip_yolo ?? null));
+  const cleaned = rejectOutliers(frames.map((f) => f.club_tip_yolo ?? f.club_tip ?? null));
   const xs = interpolateGaps(cleaned.map((p) => p?.x ?? null));
   const ys = interpolateGaps(cleaned.map((p) => p?.y ?? null));
   return xs.map((x, i) => {
