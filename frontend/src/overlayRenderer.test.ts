@@ -95,7 +95,7 @@ describe("renderOverlayFrame's club trail", () => {
     expect(state.clubTrail[0].frameIndex).toBe(0);
   });
 
-  it("resets the trail on a scrub (a big index jump)", () => {
+  it("keeps the full trail history across a scrub (a big index jump) instead of truncating it", () => {
     const ctx = fakeCtx();
     const state = createOverlayRenderState();
     const yoloTrack = [
@@ -116,9 +116,11 @@ describe("renderOverlayFrame's club trail", () => {
     renderOverlayFrame(ctx, 100, 100, 1, frames, "face_on", "right", 1, ADDRESS_REFS, state, { yoloTrack, topIndex: null, impactIndex: null });
     expect(state.clubTrail).toHaveLength(2);
 
-    // Jump straight to frame 9 (a scrub).
+    // Jump straight to frame 9 (a scrub) -- the trail is derived fresh from
+    // the full track each call, so it still reflects every real detection up
+    // to the new index instead of resetting to just the frame landed on.
     renderOverlayFrame(ctx, 100, 100, 9, frames, "face_on", "right", 1, ADDRESS_REFS, state, { yoloTrack, topIndex: null, impactIndex: null });
-    expect(state.clubTrail).toHaveLength(1);
+    expect(state.clubTrail.map((p) => p.frameIndex)).toEqual([0, 1, 9]);
   });
 
   it("falls back to the body-pose estimate on a YOLO miss instead of stopping the trail short", () => {

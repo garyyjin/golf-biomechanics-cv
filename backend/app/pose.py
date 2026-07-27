@@ -7,6 +7,7 @@ from collections.abc import Callable
 import cv2
 import mediapipe as mp
 
+from app.ball import detect_ball
 from app.club import detect_club
 
 logger = logging.getLogger(__name__)
@@ -195,6 +196,11 @@ def analyze_video(
     detect_club can return the clubhead's tip (farthest box corner) rather
     than its center; with no landmarks this frame, it falls back to center.
 
+    Also carries ball_tip — a {x, y} normalized ball-center point from a
+    separate per-frame YOLOv8n ball detector (see app/ball.py). Always None
+    until backend/app/models/ball.pt exists. Only meaningful around and
+    after impact; the frontend (stats.ts) only ever searches for it there.
+
     on_progress(current_index, total_frames), if given, is called after each
     frame is processed — total_frames comes from CAP_PROP_FRAME_COUNT, which
     OpenCV can misreport for some containers/codecs, so callers should treat
@@ -227,6 +233,9 @@ def analyze_video(
     total_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
 
     frames = []
+    hough_hits = 0
+    yolo_hits = 0
+    ball_hits = 0
     # smooth_landmarks=False: the API smooths by default, but downstream
     # consumers need raw per-frame values.
     # min_detection_confidence left at the MediaPipe default (0.5): raising it
@@ -270,6 +279,13 @@ def analyze_video(
                 club_tip = _detect_club_tip(frame, landmarks, width, height)
             hand_point = _wrist_point(landmarks, width, height) if landmarks is not None else None
             club_tip_yolo = detect_club(frame, hand_point)
+            ball_tip = detect_ball(frame)
+            if club_tip is not None:
+                hough_hits += 1
+            if club_tip_yolo is not None:
+                yolo_hits += 1
+            if ball_tip is not None:
+                ball_hits += 1
             frames.append(
                 {
                     "index": index,
@@ -277,6 +293,7 @@ def analyze_video(
                     "landmarks": landmarks,
                     "club_tip": club_tip,
                     "club_tip_yolo": club_tip_yolo,
+                    "ball_tip": ball_tip,
                 }
             )
             index += 1
@@ -287,6 +304,18 @@ def analyze_video(
 
     if not frames:
         raise ValueError("could not decode video")
+
+    # Real-world detector hit-rate evidence, gathered on every analysis run
+    # rather than only from the handful of fixtures under backend/data/ or
+    # synthetic test videos -- see backend/training/diagnose_detectors.py for
+    # a one-off tool that re-runs this against stored footage on demand.
+    logger.info(
+        "club/ball detection hit rates over %d frames: hough=%d yolo=%d ball=%d",
+        len(frames),
+        hough_hits,
+        yolo_hits,
+        ball_hits,
+    )
 
     return {
         "fps": fps,

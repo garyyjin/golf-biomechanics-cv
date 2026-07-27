@@ -102,9 +102,13 @@ library of reference swings to see whether they fall inside a normal range.
 - Clubhead speed, estimated ball speed, and estimated carry distance,
   derived from the club tracer's positions around address and impact.
   These are rough estimates, not launch-monitor-grade measurements — they
-  assume a fixed club length (driver) and a typical smash factor, and
-  ignore spin and drag entirely. The panel is explicit about this rather
-  than presenting the numbers as precise.
+  assume a fixed club length (driver) and a typical smash factor. Carry
+  distance is a linear regression against ball speed fit on 1,137 real
+  driver shots from [CaddieSet](https://github.com/damilab/CaddieSet)
+  (`backend/training/calibrate_carry.py`), rather than a no-spin/no-drag
+  physics formula — still not launch-monitor-grade, but shaped by real
+  shots instead of ignoring spin and drag entirely. The panel is explicit
+  about this rather than presenting the numbers as precise.
 
 ## Architecture
 

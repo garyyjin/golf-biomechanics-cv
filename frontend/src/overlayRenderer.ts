@@ -3,29 +3,26 @@ import type { ClubPoint } from "./club.ts";
 import { drawClubTracer, drawOverlayLines, drawSkeleton } from "./draw.ts";
 import { computeOverlayLines } from "./geometry.ts";
 import type { AddressRefs, ClubTrailPoint, OverlayLine } from "./geometry.ts";
-import { LandmarkSmoother, PointSmoother } from "./smoothing.ts";
+import { LandmarkSmoother } from "./smoothing.ts";
 import type { Handedness, PoseFrame, View } from "./types.ts";
 
-const CLUB_TRAIL_JUMP_THRESHOLD = 2;
-
 /**
- * Per-video drawing state: smoothing and the club tracer trail are stateful
- * across frames, so each video (the user's swing and a reference swing) needs
- * its own bundle to draw independently.
+ * Per-video drawing state: the skeleton smoother is stateful across frames
+ * (it damps jitter relative to whatever was drawn last), so each video (the
+ * user's swing and a reference swing) needs its own bundle to draw
+ * independently. `clubTrail` isn't accumulated state -- it's the trail
+ * renderOverlayFrame derived on its most recent call, kept here only so
+ * callers/tests can inspect what was drawn.
  */
 export interface OverlayRenderState {
   smoother: LandmarkSmoother;
-  clubSmoother: PointSmoother;
   clubTrail: ClubTrailPoint[];
-  prevIndex: number | null;
 }
 
 export function createOverlayRenderState(): OverlayRenderState {
   return {
     smoother: new LandmarkSmoother(),
-    clubSmoother: new PointSmoother(),
     clubTrail: [],
-    prevIndex: null,
   };
 }
 
@@ -69,26 +66,22 @@ export function renderOverlayFrame(
   drawOverlayLines(ctx, overlay, cssWidth, cssHeight);
 
   if (clubTracer) {
-    // A big jump (scrub/seek) starts a fresh tracer instead of drawing a
-    // straight streak across the skipped frames.
-    const prevIndex = state.prevIndex;
-    if (prevIndex === null || Math.abs(index - prevIndex) > CLUB_TRAIL_JUMP_THRESHOLD) {
-      state.clubTrail = [];
+    // Derived fresh from the full per-frame track every call, not
+    // accumulated across renders -- a scrub straight to late in the swing
+    // shows the whole trail up to that point instead of a truncated one that
+    // only rebuilds forward from wherever playback resumed. Past impact, the
+    // swing path is complete, so the trail stops growing there instead of
+    // continuing through the follow-through (a real swing-path graphic
+    // doesn't keep drawing after the ball's gone).
+    const { impactIndex, yoloTrack } = clubTracer;
+    const lastIndex = impactIndex === null ? index : Math.min(index, impactIndex);
+    const trail: ClubTrailPoint[] = [];
+    for (let i = 0; i <= lastIndex; i++) {
+      const tip = resolveClubTip(i, yoloTrack, frames[i].landmarks, handedness);
+      if (tip) trail.push({ ...tip, frameIndex: i });
     }
-    state.prevIndex = index;
-
-    // Past impact, the swing path is complete -- freeze the trail (a real
-    // swing-path graphic doesn't keep drawing through the follow-through)
-    // instead of continuing to append points.
-    const { impactIndex } = clubTracer;
-    if (impactIndex === null || index <= impactIndex) {
-      const rawTip = resolveClubTip(index, clubTracer.yoloTrack, smoothed, handedness);
-      const tip = state.clubSmoother.apply(rawTip, index);
-      if (tip) {
-        state.clubTrail = [...state.clubTrail, { ...tip, frameIndex: index }];
-      }
-    }
-    drawClubTracer(ctx, state.clubTrail, cssWidth, cssHeight, clubTracer.topIndex);
+    state.clubTrail = trail;
+    drawClubTracer(ctx, trail, cssWidth, cssHeight, clubTracer.topIndex);
   }
 
   return overlay;

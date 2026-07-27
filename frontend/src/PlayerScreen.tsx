@@ -267,8 +267,8 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
   const feedback = useMemo(() => computeFeedback(analysis, benchmarks), [analysis, benchmarks]);
   const swingScore = useMemo(() => computeSwingScore(feedback), [feedback]);
   const swingStats = useMemo(
-    () => computeSwingStats(frames, clubTrack, feedback.phases, handedness),
-    [frames, clubTrack, feedback.phases, handedness],
+    () => computeSwingStats(frames, feedback.phases, handedness),
+    [frames, feedback.phases, handedness],
   );
 
   // Down-the-line footage is most accurate when the camera sits directly on
@@ -326,25 +326,26 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
     ],
   );
 
-  // requestVideoFrameCallback loop: draws whenever the video presents a frame
-  // (playback and most seeks).
+  // requestAnimationFrame loop: keeps the overlay in sync with the video for
+  // as long as it's playing. requestVideoFrameCallback would give exact
+  // presented-frame timing, but isn't reliably supported/fired across
+  // browsers -- when it silently stops firing mid-playback, the canvas
+  // freezes on its last-drawn frame while the video keeps advancing
+  // underneath, which is indistinguishable from a broken overlay. A plain
+  // rAF loop has no such gap: it only depends on `playing`, which the
+  // video's own onPlay/onPause/onEnded handlers already track reliably.
   useEffect(() => {
     const video = videoRef.current;
-    if (!video) return;
+    if (!video || !playing) return;
     let handle = 0;
-    let cancelled = false;
-    const onFrame: VideoFrameRequestCallback = (_now, metadata) => {
-      if (cancelled) return;
-      drawAt(metadata.mediaTime);
-      setTime(metadata.mediaTime);
-      handle = video.requestVideoFrameCallback(onFrame);
+    const tick = () => {
+      drawAt(video.currentTime);
+      setTime(video.currentTime);
+      handle = requestAnimationFrame(tick);
     };
-    handle = video.requestVideoFrameCallback(onFrame);
-    return () => {
-      cancelled = true;
-      video.cancelVideoFrameCallback(handle);
-    };
-  }, [drawAt]);
+    handle = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(handle);
+  }, [playing, drawAt]);
 
   // Canvas backing store tracks the video's displayed size (window resizes,
   // layout changes) at device pixel ratio; redraw after each resize.

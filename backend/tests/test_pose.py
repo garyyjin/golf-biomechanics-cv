@@ -82,6 +82,16 @@ def test_analyze_video_includes_club_tip_yolo_key(sample_video):
     )
 
 
+def test_analyze_video_includes_ball_tip_key(sample_video):
+    result = analyze_video(str(sample_video))
+    # Shape-only, same reasoning as club_tip_yolo above: None with no
+    # ball.pt installed, but don't pin None in case a model is present.
+    assert all("ball_tip" in f for f in result["frames"])
+    assert all(
+        f["ball_tip"] is None or set(f["ball_tip"]) == {"x", "y"} for f in result["frames"]
+    )
+
+
 def test_detect_club_tip_finds_a_drawn_line_from_the_hands():
     width = height = 200
     frame = np.full((height, width, 3), 255, dtype=np.uint8)
