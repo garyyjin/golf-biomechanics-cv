@@ -77,7 +77,7 @@ def test_analyze_video_includes_club_tip_yolo_key(sample_video):
     # trained model may legitimately fire on some frames, so don't pin None.
     assert all("club_tip_yolo" in f for f in result["frames"])
     assert all(
-        f["club_tip_yolo"] is None or set(f["club_tip_yolo"]) == {"x", "y"}
+        f["club_tip_yolo"] is None or set(f["club_tip_yolo"]) == {"x", "y", "confidence"}
         for f in result["frames"]
     )
 
@@ -102,6 +102,39 @@ def test_detect_club_tip_finds_a_drawn_line_from_the_hands():
     assert result is not None
     assert result["x"] == pytest.approx(100 / width, abs=0.05)
     assert result["y"] == pytest.approx(50 / height, abs=0.05)
+
+
+def _confidence_for_line(end: tuple[int, int]) -> float:
+    """_detect_club_tip's reported confidence for a line drawn from the hands
+    at (100, 150) out to `end`, against the standard _base_landmarks pose."""
+    width = height = 200
+    frame = np.full((height, width, 3), 255, dtype=np.uint8)
+    cv2.line(frame, (100, 150), end, (0, 0, 0), 3)
+    result = _detect_club_tip(frame, _base_landmarks(width, height), width, height)
+    assert result is not None
+    return result["confidence"]
+
+
+def test_detect_club_tip_confidence_is_a_unit_interval_score():
+    confidence = _confidence_for_line((100, 50))
+    assert 0.0 <= confidence <= 1.0
+
+
+def test_detect_club_tip_confidence_rises_with_alignment_to_the_hand_prior():
+    """The hand-orientation prior points straight up, so a vertical line is a
+    better club-shaft candidate than a diagonal one of similar length. Pinning
+    the ordering rather than exact values: the score's job is to rank Hough
+    candidates, not to be a calibrated probability (and it is deliberately not
+    comparable to the YOLO detector's confidence)."""
+    aligned = _confidence_for_line((100, 50))  # straight up, ~100px
+    diagonal = _confidence_for_line((170, 80))  # ~45 degrees off, ~99px
+    assert aligned > diagonal
+
+
+def test_detect_club_tip_confidence_rises_with_line_length():
+    long_line = _confidence_for_line((100, 50))  # 100px
+    short_line = _confidence_for_line((100, 100))  # 50px, same alignment
+    assert long_line > short_line
 
 
 def test_detect_club_tip_ignores_a_line_misaligned_with_hand_orientation():

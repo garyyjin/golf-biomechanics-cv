@@ -90,6 +90,14 @@ def _detect_club_tip(frame, landmarks: list[dict], width: int, height: int) -> d
     when neither hand is visible or no confident line is found — motion
     blur, low contrast, and an occluded club are all realistic failure modes
     for a technique built on visible edges rather than a trained detector.
+
+    The returned "confidence" is a [0,1] *quality score* for the winning
+    line — its alignment with the hand-orientation prior, scaled by how much
+    of the search radius it spans. It is emphatically NOT a probability, and
+    NOT on the same scale as the YOLO detector's class confidence (see
+    club.py's detect_club): nothing may compare the two numerically to decide
+    which detector wins a frame. It exists only to rank Hough candidates
+    against each other and to let downstream fusion drop weak Hough points.
     """
     ls, rs = landmarks[_LEFT_SHOULDER], landmarks[_RIGHT_SHOULDER]
     if min(ls["visibility"], rs["visibility"]) < _VISIBILITY_THRESHOLD:
@@ -143,6 +151,7 @@ def _detect_club_tip(frame, landmarks: list[dict], width: int, height: int) -> d
 
     near_radius = radius * 0.4
     best_point = None
+    best_confidence = 0.0
     best_score = -math.inf
     for line in lines:
         lx1, ly1, lx2, ly2 = line[0]
@@ -166,10 +175,22 @@ def _detect_club_tip(frame, landmarks: list[dict], width: int, height: int) -> d
         if score > best_score:
             best_score = score
             best_point = far
+            # Same two factors the ranking uses, but with the length term
+            # normalized against the search radius so the result lands in
+            # [0,1] instead of scaling with the frame's pixel dimensions.
+            # Ranking deliberately keeps using the raw (unnormalized) score:
+            # radius is constant within a frame, so normalizing wouldn't
+            # change which candidate wins, and leaving the ranking untouched
+            # keeps this purely additive.
+            best_confidence = alignment * min(1.0, seg_len / radius)
 
     if best_point is None:
         return None
-    return {"x": best_point[0] / width, "y": best_point[1] / height}
+    return {
+        "x": best_point[0] / width,
+        "y": best_point[1] / height,
+        "confidence": best_confidence,
+    }
 
 
 def analyze_video(
@@ -181,20 +202,29 @@ def analyze_video(
 
     Returns {fps, width, height, frame_count, frames}; frames with no detected
     pose get landmarks=None. Each frame also carries club_tip — a
-    {x, y} normalized point from Hough-line detection anchored on the hands
-    (see _detect_club_tip), or None when no confident line was found (a
-    frame with no landmarks always has club_tip=None too, since detection
+    {x, y, confidence} normalized point from Hough-line detection anchored on
+    the hands (see _detect_club_tip), or None when no confident line was found
+    (a frame with no landmarks always has club_tip=None too, since detection
     needs the hand landmarks to anchor its search).
 
-    Also carries club_tip_yolo — a {x, y} normalized point from a separate,
-    still-experimental per-frame YOLOv8n clubhead detector (see app/club.py),
-    trained (once weights exist) independently of the Hough-line approach
-    above. Deliberately not reconciled with club_tip yet: this is additive
-    data for evaluating the two approaches side by side, not a replacement.
-    Always None until backend/app/models/clubhead.pt exists. When landmarks
-    are available, the more-visible wrist is passed in as an anchor so
-    detect_club can return the clubhead's tip (farthest box corner) rather
-    than its center; with no landmarks this frame, it falls back to center.
+    Also carries club_tip_yolo — a {x, y, confidence} normalized point from a
+    separate per-frame YOLOv8n clubhead detector (see app/club.py), trained
+    independently of the Hough-line approach above. Always None until
+    backend/app/models/clubhead.pt exists. When landmarks are available, the
+    more-visible wrist is passed in as an anchor so detect_club can return the
+    clubhead's tip (farthest box corner) rather than its center; with no
+    landmarks this frame, it falls back to center.
+
+    The two clubhead signals are emitted side by side rather than merged here:
+    they report different physical points (Hough gives a point somewhere along
+    the *shaft*, at whatever length its line segment happened to be; YOLO gives
+    the clubhead *toe*), and the offset between them rotates with the club as
+    it pivots about the hands. Reconciling that needs a per-clip registration
+    fit over the whole track, which is a frontend concern — see
+    frontend/src/club.ts, where every consumer reads a single fused track.
+    backend/training/diagnose_detectors.py measures how well the two agree.
+    Their "confidence" values are on different scales and are never compared
+    against each other (see _detect_club_tip's docstring).
 
     Also carries ball_tip — a {x, y, width, height} normalized ball box from
     a separate per-frame YOLOv8n ball detector (see app/ball.py), where

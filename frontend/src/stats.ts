@@ -172,6 +172,10 @@ export interface SwingStats {
   /** See CalibrationSource's doc comment. Null alongside a null
    * clubheadSpeedMph. */
   calibrationSource: CalibrationSource | null;
+  /** Which gate in computeSwingStats produced this result -- "ok" when the
+   * numbers above are populated, otherwise the specific reason they aren't,
+   * which StatsPanel turns into a plain-language caption. */
+  diagnostic: SwingStatsDiagnostic;
 }
 
 const NULL_STATS: Omit<SwingStats, "diagnostic"> = {

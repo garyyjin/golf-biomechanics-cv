@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 from app import club
-from app.club import MODEL_PATH, detect_club
+from app.club import CONFIDENCE_THRESHOLD, MODEL_PATH, detect_club
 
 
 @pytest.fixture(autouse=True)
@@ -45,14 +45,26 @@ def test_detect_club_returns_none_when_no_model_is_installed(monkeypatch, tmp_pa
 def test_detect_club_defaults_to_box_center_with_no_hand_point(monkeypatch):
     monkeypatch.setattr(club, "_load_model", lambda: _FakeModel([_FakeBox((10, 10, 30, 30), 0.9)]))
     frame = np.zeros((100, 100, 3), dtype=np.uint8)
-    assert detect_club(frame) == {"x": 0.2, "y": 0.2}
+    assert detect_club(frame) == {"x": 0.2, "y": 0.2, "confidence": 0.9}
 
 
 def test_detect_club_returns_the_box_corner_farthest_from_the_hand(monkeypatch):
     monkeypatch.setattr(club, "_load_model", lambda: _FakeModel([_FakeBox((10, 10, 30, 30), 0.9)]))
     frame = np.zeros((100, 100, 3), dtype=np.uint8)
     # Hand at the box's bottom-right corner -- the tip is the opposite corner.
-    assert detect_club(frame, hand_point=(30, 30)) == {"x": 0.1, "y": 0.1}
+    assert detect_club(frame, hand_point=(30, 30)) == {"x": 0.1, "y": 0.1, "confidence": 0.9}
+
+
+def test_detect_club_reports_the_winning_boxs_confidence(monkeypatch):
+    # Two boxes; the higher-confidence one wins and its own score is what
+    # gets reported -- not the threshold, and not the loser's.
+    monkeypatch.setattr(
+        club,
+        "_load_model",
+        lambda: _FakeModel([_FakeBox((10, 10, 30, 30), 0.4), _FakeBox((60, 60, 80, 80), 0.8)]),
+    )
+    frame = np.zeros((100, 100, 3), dtype=np.uint8)
+    assert detect_club(frame) == {"x": 0.7, "y": 0.7, "confidence": 0.8}
 
 
 @pytest.mark.skipif(
@@ -68,6 +80,7 @@ def test_detect_club_with_a_trained_model_returns_a_normalized_point_or_none():
     result = detect_club(frame)
     if result is None:
         return
-    assert set(result) == {"x", "y"}
+    assert set(result) == {"x", "y", "confidence"}
     assert 0.0 <= result["x"] <= 1.0
     assert 0.0 <= result["y"] <= 1.0
+    assert CONFIDENCE_THRESHOLD < result["confidence"] <= 1.0

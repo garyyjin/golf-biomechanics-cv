@@ -37,8 +37,8 @@ def detect_club(
     frame_bgr: Any, hand_point: tuple[float, float] | None = None
 ) -> dict[str, float] | None:
     """Highest-confidence clubhead detection in this frame as a normalized
-    [0,1] {"x", "y"}, or None if no model is installed or nothing scored
-    above CONFIDENCE_THRESHOLD.
+    [0,1] {"x", "y", "confidence"}, or None if no model is installed or
+    nothing scored above CONFIDENCE_THRESHOLD.
 
     hand_point, if given, is the pixel-space (x, y) of the golfer's grip
     (see pose.py's wrist selection) — the box corner farthest from it is
@@ -46,6 +46,12 @@ def detect_club(
     ball) rather than the box center, which sits nearer the hosel/shaft side
     of a box that spans the whole clubhead. Falls back to the box center
     when no hand position is available (e.g. no pose landmarks this frame).
+
+    confidence is the model's own class probability for the winning box, in
+    [0,1]. Reported so downstream fusion can treat a marginal detection
+    differently from a confident one (see frontend/src/club.ts) — note that
+    it is *not* on the same scale as the Hough detector's quality score (see
+    pose.py's _detect_club_tip), so the two are never comparable numerically.
     """
     model = _load_model()
     if model is None:
@@ -74,4 +80,4 @@ def detect_club(
         hx, hy = hand_point
         corners = [(x1, y1), (x2, y1), (x1, y2), (x2, y2)]
         point_x, point_y = max(corners, key=lambda c: math.hypot(c[0] - hx, c[1] - hy))
-    return {"x": point_x / width, "y": point_y / height}
+    return {"x": point_x / width, "y": point_y / height, "confidence": best_confidence}

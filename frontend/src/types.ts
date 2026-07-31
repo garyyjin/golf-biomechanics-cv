@@ -18,13 +18,22 @@ export interface PoseFrame {
   // confident line was found — callers fall back to a body-pose-based
   // estimate (geometry.ts's clubTipEstimate) in that case. Optional so
   // test fixtures that predate this field don't all need updating.
-  club_tip?: { x: number; y: number } | null;
-  // Normalized [0,1] point from a separate, still-experimental per-frame
-  // YOLOv8n clubhead detector (see backend/app/club.py) — additive data for
-  // evaluating against club_tip, not a replacement for it yet. Always
-  // null/absent until backend/app/models/clubhead.pt exists (no trained
-  // weights yet). Optional for the same reason as club_tip.
-  club_tip_yolo?: { x: number; y: number } | null;
+  //
+  // confidence is a [0,1] *quality score* for the detected line, not a
+  // probability, and deliberately not on the same scale as club_tip_yolo's
+  // — never compare the two numerically (see club.ts's fuseClubTrack).
+  // Optional on its own: analyses stored in the library before the backend
+  // reported it have the point but no score, and an absent score must read
+  // as "unknown" (i.e. pass every threshold) rather than as a weak one, or
+  // those entries would silently lose their club track.
+  club_tip?: { x: number; y: number; confidence?: number } | null;
+  // Normalized [0,1] point from a separate per-frame YOLOv8n clubhead
+  // detector (see backend/app/club.py). Reports the clubhead *toe*, where
+  // club_tip reports a point along the shaft — club.ts reconciles the two
+  // into one track. Always null/absent until backend/app/models/clubhead.pt
+  // exists. confidence is the model's own class probability; it is optional
+  // for the same back-compat reason as club_tip's.
+  club_tip_yolo?: { x: number; y: number; confidence?: number } | null;
   // Normalized [0,1] ball box from a per-frame YOLOv8n ball detector (see
   // backend/app/ball.py). Position (x, y) is only meaningful around and
   // after impact -- the ball isn't a moving target before then. width/height
