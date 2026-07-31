@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { DEFAULT_BENCHMARKS } from "./benchmarks.default";
-import { loadBenchmarks } from "./benchmarks";
-import type { BenchmarkTable } from "./benchmarks";
+import { DEFAULT_BENCHMARKS_VERSION, loadBenchmarks } from "./benchmarks";
+import type { LoadedBenchmarks } from "./benchmarks";
+import { saveSwingSummary } from "./historyApi";
 import { LibraryScreen } from "./LibraryScreen";
 import { PlayerScreen } from "./PlayerScreen";
+import { computeSwingSummary } from "./swingSummary";
 import { useTheme } from "./theme";
 import { UploadScreen } from "./UploadScreen";
 import type { AnalysisResponse } from "./types";
@@ -12,13 +14,22 @@ type Screen = "upload" | "player" | "library";
 
 interface Session {
   videoUrl: string;
+  /** Object URLs must be revoked on teardown; a URL served by the backend
+   * must not be. Tracking which kind this is keeps a future stored-swing
+   * playback from being revoked out from under itself. */
+  videoUrlIsObjectUrl: boolean;
   analysis: AnalysisResponse;
+  /** The history entry the backend stored this swing as. */
+  swingId: string;
 }
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>("upload");
   const [session, setSession] = useState<Session | null>(null);
-  const [benchmarks, setBenchmarks] = useState<BenchmarkTable>(DEFAULT_BENCHMARKS);
+  const [benchmarks, setBenchmarks] = useState<LoadedBenchmarks>({
+    table: DEFAULT_BENCHMARKS,
+    version: DEFAULT_BENCHMARKS_VERSION,
+  });
   const { theme, toggleTheme } = useTheme();
 
   useEffect(() => {
@@ -29,13 +40,34 @@ export default function App() {
     setBenchmarks(await loadBenchmarks());
   }
 
-  function handleAnalyzed(file: File, analysis: AnalysisResponse) {
-    setSession({ videoUrl: URL.createObjectURL(file), analysis });
+  async function handleAnalyzed(file: File, analysis: AnalysisResponse, swingId: string) {
+    setSession((previous) => {
+      if (previous?.videoUrlIsObjectUrl) URL.revokeObjectURL(previous.videoUrl);
+      return {
+        videoUrl: URL.createObjectURL(file),
+        videoUrlIsObjectUrl: true,
+        analysis,
+        swingId,
+      };
+    });
     setScreen("player");
+
+    // The backend stored the swing but can't score it — scoring lives here.
+    // A failure is deliberately swallowed: the user is looking at their
+    // analysis, and an unscored swing is recoverable later from its stored
+    // analysis.
+    try {
+      await saveSwingSummary(
+        swingId,
+        computeSwingSummary(analysis, benchmarks.table, benchmarks.version),
+      );
+    } catch {
+      // recoverable — the summary can be recomputed from the stored analysis
+    }
   }
 
   function handleReset() {
-    if (session) URL.revokeObjectURL(session.videoUrl);
+    if (session?.videoUrlIsObjectUrl) URL.revokeObjectURL(session.videoUrl);
     setSession(null);
     setScreen("upload");
   }
@@ -82,7 +114,7 @@ export default function App() {
         <PlayerScreen
           videoUrl={session.videoUrl}
           analysis={session.analysis}
-          benchmarks={benchmarks}
+          benchmarks={benchmarks.table}
           onReset={handleReset}
         />
       ) : (

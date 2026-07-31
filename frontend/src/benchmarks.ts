@@ -64,16 +64,36 @@ function hydrateEmpiricalTable(raw: RawBenchmarkResponse["table"], base: Benchma
   return result;
 }
 
+/** The published defaults' stand-in version stamp, used when the backend
+ * couldn't be reached and no empirical benchmarks are in play. A literal
+ * rather than null so staleness comparisons are always defined — see
+ * SwingSummary.benchmarksAt. */
+export const DEFAULT_BENCHMARKS_VERSION = "defaults";
+
+export interface LoadedBenchmarks {
+  table: BenchmarkTable;
+  /** Changes whenever the reference library is added to or deleted from
+   * (library.py's recompute_benchmarks restamps it), which is exactly when
+   * every stored swing score becomes stale. */
+  version: string;
+}
+
 /**
  * Fetches the server's current aggregate benchmarks and merges them over the
  * published defaults. Falls back to defaults alone if the backend isn't
  * reachable — same graceful-degradation shape used elsewhere in this app.
  */
-export async function loadBenchmarks(): Promise<BenchmarkTable> {
+export async function loadBenchmarks(): Promise<LoadedBenchmarks> {
   try {
     const raw = await fetchBenchmarks();
-    return mergeBenchmarks(DEFAULT_BENCHMARKS, hydrateEmpiricalTable(raw.table, DEFAULT_BENCHMARKS));
+    return {
+      table: mergeBenchmarks(DEFAULT_BENCHMARKS, hydrateEmpiricalTable(raw.table, DEFAULT_BENCHMARKS)),
+      // generatedAt is null until the library has enough samples to produce
+      // any empirical range at all, in which case the merge above yields the
+      // published defaults and the defaults' stamp is the honest answer.
+      version: raw.generatedAt ?? DEFAULT_BENCHMARKS_VERSION,
+    };
   } catch {
-    return DEFAULT_BENCHMARKS;
+    return { table: DEFAULT_BENCHMARKS, version: DEFAULT_BENCHMARKS_VERSION };
   }
 }

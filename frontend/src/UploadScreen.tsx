@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { analyzeVideo, pollAnalysisJob } from "./api";
+import type { AnalysisJobHandle } from "./api";
 import { FileField } from "./FileField";
 import type { AnalysisResponse, Handedness, Quality, View } from "./types";
 
 interface Props {
-  onAnalyzed: (file: File, analysis: AnalysisResponse) => void;
+  onAnalyzed: (file: File, analysis: AnalysisResponse, swingId: string) => void;
 }
 
 const VIEW_OPTIONS: { value: View; label: string }[] = [
@@ -30,7 +31,7 @@ export function UploadScreen({ onAnalyzed }: Props) {
   const [processing, setProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [jobId, setJobId] = useState<string | null>(null);
+  const [job, setJob] = useState<AnalysisJobHandle | null>(null);
 
   const ready =
     file !== null && view !== null && handedness !== null && quality !== null && !processing;
@@ -40,10 +41,17 @@ export function UploadScreen({ onAnalyzed }: Props) {
     setProcessing(true);
     setProgress(0);
     setError(null);
-    setJobId(null);
+    setJob(null);
     try {
-      const analysis = await analyzeVideo(file, view, handedness, quality, setProgress, setJobId);
-      onAnalyzed(file, analysis);
+      const { analysis, swingId } = await analyzeVideo(
+        file,
+        view,
+        handedness,
+        quality,
+        setProgress,
+        setJob,
+      );
+      onAnalyzed(file, analysis, swingId);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Analysis failed");
       setProcessing(false);
@@ -54,12 +62,12 @@ export function UploadScreen({ onAnalyzed }: Props) {
    * connection doesn't force re-uploading a video that's already most of
    * the way through server-side processing. */
   async function retry() {
-    if (!file || !jobId) return;
+    if (!file || !job) return;
     setProcessing(true);
     setError(null);
     try {
-      const analysis = await pollAnalysisJob(jobId, setProgress);
-      onAnalyzed(file, analysis);
+      const analysis = await pollAnalysisJob(job.jobId, setProgress);
+      onAnalyzed(file, analysis, job.swingId);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Analysis failed");
       setProcessing(false);
@@ -80,7 +88,7 @@ export function UploadScreen({ onAnalyzed }: Props) {
         disabled={processing}
         onChange={(f) => {
           setFile(f);
-          setJobId(null);
+          setJob(null);
         }}
       />
 
@@ -153,7 +161,7 @@ export function UploadScreen({ onAnalyzed }: Props) {
       {error && (
         <div className="error-row">
           <p className="error">{error}</p>
-          {jobId && (
+          {job && (
             <button type="button" className="reset retry-button" onClick={retry}>
               Retry
             </button>
