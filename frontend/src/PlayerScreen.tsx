@@ -25,8 +25,9 @@ import { StatsPanel } from "./StatsPanel";
 import { computeSwingStats } from "./stats";
 import { SwingScoreBadge } from "./SwingScoreBadge";
 import { computeSwingScore } from "./swingScore";
-import { computeTempoScore, describeTempoRatio } from "./tempo";
+import { computeSwingTempo, computeTempoScore, describeTempoRatio } from "./tempo";
 import type { TempoScore, TempoSegment } from "./tempo";
+import { TempoPanel } from "./TempoPanel";
 import type { AnalysisResponse } from "./types";
 
 interface Props {
@@ -269,6 +270,12 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
   const swingStats = useMemo(
     () => computeSwingStats(frames, feedback.phases, handedness),
     [frames, feedback.phases, handedness],
+  );
+  // Absolute tempo against the 3:1 tour standard — needs only this swing's
+  // own phases, so unlike tempoScore below it doesn't wait on a reference.
+  const swingTempo = useMemo(
+    () => computeSwingTempo(feedback.phases, frames),
+    [feedback.phases, frames],
   );
 
   // Down-the-line footage is most accurate when the camera sits directly on
@@ -709,6 +716,8 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
           <SwingScoreBadge score={swingScore} />
 
           <StatsPanel stats={swingStats} />
+
+          <TempoPanel tempo={swingTempo} />
 
           <aside className="readout-panel">
             <h2>{view === "face_on" ? "Face-on" : "Down-the-line"}</h2>

@@ -110,6 +110,19 @@ library of reference swings to see whether they fall inside a normal range.
   shots instead of ignoring spin and drag entirely. The panel is explicit
   about this rather than presenting the numbers as precise.
 
+### Swing tempo
+
+- Your backswing:downswing time ratio (takeaway→top over top→impact),
+  scored out of 10 against the **3:1 tour standard** — the ratio tour
+  players cluster around regardless of how fast they swing overall
+  (popularized as "Tour Tempo": 24:8, 21:7 and 18:6 frames at 30fps are all
+  3:1). Computed from the swing's own detected phases, so it's populated on
+  the first upload with no reference library needed, and shown alongside the
+  raw backswing/downswing durations since the ratio alone can't tell a
+  languid 3:1 from a lightning-quick one.
+- Distinct from the **Tempo score** in compare mode (below), which rates
+  agreement with a chosen reference swing rather than an absolute target.
+
 ## Architecture
 
 - **`backend/`** — FastAPI service. Decodes uploaded video with OpenCV and

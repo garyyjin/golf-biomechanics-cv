@@ -191,6 +191,7 @@ h3 {
 .readout-panel,
 .feedback-panel,
 .stats-panel,
+.tempo-panel,
 .library-upload,
 .library-entry {
   background: var(--color-paper);
@@ -1296,17 +1297,24 @@ button:disabled {
 
 /* Stats panel ----------------------------------------------------------------- */
 
-.stats-panel {
+/* .tempo-panel is the swing's own 3:1 tempo reading in the side panel — same
+   collapsible-card shape and readout rows as the stats panel, so it shares
+   those rules rather than restating them. (Not to be confused with
+   .tempo-card, the reference-comparison score in the video column.) */
+.stats-panel,
+.tempo-panel {
   font-size: 0.85rem;
 }
 
-.stats-panel summary {
+.stats-panel summary,
+.tempo-panel summary {
   cursor: pointer;
   font-weight: 600;
   list-style: none;
 }
 
-.stats-panel summary::-webkit-details-marker {
+.stats-panel summary::-webkit-details-marker,
+.tempo-panel summary::-webkit-details-marker {
   display: none;
 }
 
