@@ -1,8 +1,7 @@
 import type { MetricId, MetricRange, Phase } from "./benchmarks";
 import type { SwingSample } from "./calibration";
+import { BASE_URL, request, requestJson } from "./http";
 import type { AnalysisResponse, Handedness, View } from "./types";
-
-const BASE_URL = "http://localhost:8000";
 
 export interface LibraryEntry {
   id: string;
@@ -25,28 +24,6 @@ export interface RawBenchmarkEntry {
 export interface RawBenchmarkResponse {
   generatedAt: string | null;
   table: Record<View, Partial<Record<Phase, RawBenchmarkEntry[]>>>;
-}
-
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  let response: Response;
-  try {
-    response = await fetch(`${BASE_URL}${path}`, init);
-  } catch {
-    throw new Error("Could not reach the analysis server. Is the backend running on port 8000?");
-  }
-
-  if (!response.ok) {
-    let message = `Request failed (${response.status})`;
-    try {
-      const body = await response.json();
-      if (typeof body.detail === "string") message = body.detail;
-    } catch {
-      // keep generic message
-    }
-    throw new Error(message);
-  }
-
-  return response.json();
 }
 
 export function uploadReferenceSwing(
@@ -78,11 +55,7 @@ export function referenceSwingVideoUrl(id: string): string {
 }
 
 export function submitSamples(id: string, samples: SwingSample[]): Promise<RawBenchmarkResponse> {
-  return request(`/reference-swings/${id}/samples`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ samples }),
-  });
+  return requestJson(`/reference-swings/${id}/samples`, "POST", { samples });
 }
 
 export function fetchBenchmarks(): Promise<RawBenchmarkResponse> {
