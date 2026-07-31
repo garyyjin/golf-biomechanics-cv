@@ -1,35 +1,82 @@
 import { PHASE_ORDER } from "./feedback.ts";
+import { fetchSwingAnalysis } from "./historyApi.ts";
+import type { HistoryEntry } from "./historyApi.ts";
 import { fetchReferenceAnalysis } from "./libraryApi.ts";
 import type { LibraryEntry } from "./libraryApi.ts";
 import { detectPhases } from "./phases.ts";
 import type { SwingPhases } from "./phases.ts";
 import type { AnalysisResponse, Handedness, PoseFrame, View } from "./types.ts";
 
+/**
+ * A swing that can be played alongside yours, from either store.
+ *
+ * The reference library is curated good technique (often not your swing at
+ * all); history is your own log. Both are legitimate things to compare
+ * against — "how do I look next to this" and "how do I look next to myself a
+ * month ago" — so the comparison machinery takes either, and `source` is what
+ * tells it where to fetch the analysis from.
+ */
+export interface ComparableEntry {
+  id: string;
+  filename: string;
+  /** History swings carry a user-editable name; library entries don't. */
+  label?: string;
+  view: View;
+  handedness: Handedness;
+  createdAt: string;
+  source: "library" | "history";
+}
+
+export function libraryComparable(entry: LibraryEntry): ComparableEntry {
+  return { ...entry, source: "library" };
+}
+
+export function historyComparable(entry: HistoryEntry): ComparableEntry {
+  return {
+    id: entry.id,
+    filename: entry.filename,
+    label: entry.label,
+    view: entry.view,
+    handedness: entry.handedness,
+    createdAt: entry.createdAt,
+    source: "history",
+  };
+}
+
+/** What to show in the reference picker for an entry. */
+export function comparableName(entry: ComparableEntry): string {
+  return entry.label ?? entry.filename;
+}
+
 export interface ReferenceSwing {
-  entry: LibraryEntry;
+  entry: ComparableEntry;
   analysis: AnalysisResponse;
   phases: SwingPhases;
 }
 
 /**
- * Library entries comparable with a swing of the given view/handedness,
- * newest first. Cross-view comparison is visually meaningless and mixed
- * handedness would mirror every angle, so both must match. The first entry
- * is the default selection, preserving the old "most recent" auto-pick.
+ * Entries comparable with a swing of the given view/handedness, newest first.
+ * Cross-view comparison is visually meaningless and mixed handedness would
+ * mirror every angle, so both must match. The first entry is the default
+ * selection, preserving the old "most recent" auto-pick.
  */
 export function matchingReferenceEntries(
-  entries: LibraryEntry[],
+  entries: ComparableEntry[],
   view: View,
   handedness: Handedness,
-): LibraryEntry[] {
+): ComparableEntry[] {
   return entries
     .filter((e) => e.view === view && e.handedness === handedness)
     .sort((a, b) => (a.createdAt > b.createdAt ? -1 : a.createdAt < b.createdAt ? 1 : 0));
 }
 
-/** Fetches a library entry's full analysis and detects its swing phases. */
-export async function loadReferenceSwing(entry: LibraryEntry): Promise<ReferenceSwing> {
-  const analysis = await fetchReferenceAnalysis(entry.id);
+/** Fetches an entry's full analysis and detects its swing phases, from
+ * whichever store it lives in. */
+export async function loadReferenceSwing(entry: ComparableEntry): Promise<ReferenceSwing> {
+  const analysis =
+    entry.source === "history"
+      ? await fetchSwingAnalysis(entry.id)
+      : await fetchReferenceAnalysis(entry.id);
   const phases = detectPhases(analysis.frames, analysis.handedness, analysis.fps);
   return { entry, analysis, phases };
 }

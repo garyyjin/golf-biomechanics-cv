@@ -2,7 +2,10 @@ import { useEffect, useState } from "react";
 import { DEFAULT_BENCHMARKS } from "./benchmarks.default";
 import { DEFAULT_BENCHMARKS_VERSION, loadBenchmarks } from "./benchmarks";
 import type { LoadedBenchmarks } from "./benchmarks";
-import { saveSwingSummary } from "./historyApi";
+import { HistoryScreen } from "./HistoryScreen";
+import { saveSwingSummary, swingVideoUrl } from "./historyApi";
+import type { HistoryEntry } from "./historyApi";
+import { fetchSwingAnalysis } from "./historyApi";
 import { LibraryScreen } from "./LibraryScreen";
 import { PlayerScreen } from "./PlayerScreen";
 import { computeSwingSummary } from "./swingSummary";
@@ -10,16 +13,18 @@ import { useTheme } from "./theme";
 import { UploadScreen } from "./UploadScreen";
 import type { AnalysisResponse } from "./types";
 
-type Screen = "upload" | "player" | "library";
+type Screen = "upload" | "player" | "library" | "history";
 
 interface Session {
   videoUrl: string;
-  /** Object URLs must be revoked on teardown; a URL served by the backend
-   * must not be. Tracking which kind this is keeps a future stored-swing
-   * playback from being revoked out from under itself. */
+  /** Object URLs must be revoked on teardown; a stored swing's http URL must
+   * not be. Tracking which kind this is avoids revoking the wrong one, which
+   * would silently break playback of a history swing reopened twice. */
   videoUrlIsObjectUrl: boolean;
   analysis: AnalysisResponse;
-  /** The history entry the backend stored this swing as. */
+  /** The history entry this session came from — set both for a freshly
+   * analyzed swing (the backend stored it) and for one reopened from
+   * history. Lets the player exclude the swing from its own compare picker. */
   swingId: string;
 }
 
@@ -40,30 +45,42 @@ export default function App() {
     setBenchmarks(await loadBenchmarks());
   }
 
-  async function handleAnalyzed(file: File, analysis: AnalysisResponse, swingId: string) {
+  function replaceSession(next: Session) {
     setSession((previous) => {
       if (previous?.videoUrlIsObjectUrl) URL.revokeObjectURL(previous.videoUrl);
-      return {
-        videoUrl: URL.createObjectURL(file),
-        videoUrlIsObjectUrl: true,
-        analysis,
-        swingId,
-      };
+      return next;
     });
     setScreen("player");
+  }
+
+  async function handleAnalyzed(file: File, analysis: AnalysisResponse, swingId: string) {
+    replaceSession({
+      videoUrl: URL.createObjectURL(file),
+      videoUrlIsObjectUrl: true,
+      analysis,
+      swingId,
+    });
 
     // The backend stored the swing but can't score it — scoring lives here.
     // A failure is deliberately swallowed: the user is looking at their
-    // analysis, and an unscored swing is recoverable later from its stored
-    // analysis.
+    // analysis, and the history screen recomputes any missing summary anyway.
     try {
-      await saveSwingSummary(
-        swingId,
-        computeSwingSummary(analysis, benchmarks.table, benchmarks.version),
-      );
+      await saveSwingSummary(swingId, computeSwingSummary(analysis, benchmarks.table, benchmarks.version));
     } catch {
-      // recoverable — the summary can be recomputed from the stored analysis
+      // history will fill this in on its next visit
     }
+  }
+
+  /** Reopens a stored swing in the player. Its video streams from the backend
+   * rather than a local file, so there's no object URL to revoke. */
+  async function handleOpenSwing(entry: HistoryEntry) {
+    const analysis = await fetchSwingAnalysis(entry.id);
+    replaceSession({
+      videoUrl: swingVideoUrl(entry.id),
+      videoUrlIsObjectUrl: false,
+      analysis,
+      swingId: entry.id,
+    });
   }
 
   function handleReset() {
@@ -71,6 +88,12 @@ export default function App() {
     setSession(null);
     setScreen("upload");
   }
+
+  const navTabs: { screen: Screen; label: string; active: boolean }[] = [
+    { screen: session ? "player" : "upload", label: "Analyze", active: screen === "upload" || screen === "player" },
+    { screen: "history", label: "History", active: screen === "history" },
+    { screen: "library", label: "Library", active: screen === "library" },
+  ];
 
   return (
     <>
@@ -81,20 +104,17 @@ export default function App() {
         </span>
         <div className="top-nav-right">
           <nav className="top-nav toggle-group" role="radiogroup" aria-label="Screen">
-            <button
-              type="button"
-              className={screen !== "library" ? "toggle selected" : "toggle"}
-              onClick={() => setScreen(session ? "player" : "upload")}
-            >
-              Analyze
-            </button>
-            <button
-              type="button"
-              className={screen === "library" ? "toggle selected" : "toggle"}
-              onClick={() => setScreen("library")}
-            >
-              Library
-            </button>
+            {navTabs.map((tab) => (
+              <button
+                key={tab.label}
+                type="button"
+                className={tab.active ? "toggle selected" : "toggle"}
+                aria-pressed={tab.active}
+                onClick={() => setScreen(tab.screen)}
+              >
+                {tab.label}
+              </button>
+            ))}
           </nav>
           <button
             type="button"
@@ -110,11 +130,14 @@ export default function App() {
 
       {screen === "library" ? (
         <LibraryScreen onBenchmarksChanged={refreshBenchmarks} />
+      ) : screen === "history" ? (
+        <HistoryScreen benchmarks={benchmarks} onOpenSwing={handleOpenSwing} />
       ) : screen === "player" && session ? (
         <PlayerScreen
           videoUrl={session.videoUrl}
           analysis={session.analysis}
           benchmarks={benchmarks.table}
+          currentSwingId={session.swingId}
           onReset={handleReset}
         />
       ) : (

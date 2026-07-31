@@ -6,19 +6,22 @@ import { fillClubGaps, hasClubTrack } from "./club";
 import {
   anchorTimePairs,
   buildNaturalSync,
+  comparableName,
+  historyComparable,
+  libraryComparable,
   loadReferenceSwing,
   matchingReferenceEntries,
   sharedPhaseAnchors,
 } from "./comparison";
-import type { ReferenceSwing, SyncPlan } from "./comparison";
+import type { ComparableEntry, ReferenceSwing, SyncPlan } from "./comparison";
 import { CLUB_TRACER_COLOR, LINE_COLORS } from "./draw";
 import { FeedbackPanel } from "./FeedbackPanel";
 import type { ReferenceStatus } from "./FeedbackPanel";
 import { computeFeedback } from "./feedback";
 import { computeAddressRefs, findAddressFrame, isDownTheLineMisaligned } from "./geometry";
 import type { OverlayLine } from "./geometry";
+import { listSwings } from "./historyApi";
 import { listReferenceSwings } from "./libraryApi";
-import type { LibraryEntry } from "./libraryApi";
 import { createOverlayRenderState, renderOverlayFrame } from "./overlayRenderer";
 import { ReferenceVideo } from "./ReferenceVideo";
 import { StatsPanel } from "./StatsPanel";
@@ -34,12 +37,23 @@ interface Props {
   videoUrl: string;
   analysis: AnalysisResponse;
   benchmarks: BenchmarkTable;
+  /** The history entry this swing is stored as, so the compare picker can
+   * leave it out of its own reference list. */
+  currentSwingId?: string;
   onReset: () => void;
 }
 
 const SPEED_OPTIONS = [0.25, 0.5, 1] as const;
 
-export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props) {
+/** Picker grouping. Curated technique first, your own swings second — the
+ * library is the "what should this look like" answer, history the "how have I
+ * changed" one. */
+const REFERENCE_GROUPS = [
+  { source: "library" as const, label: "Reference library" },
+  { source: "history" as const, label: "Your history" },
+];
+
+export function PlayerScreen({ videoUrl, analysis, benchmarks, currentSwingId, onReset }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererStateRef = useRef(createOverlayRenderState());
@@ -81,7 +95,7 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
   const [playbackRate, setPlaybackRate] = useState<number>(1);
   const [reference, setReference] = useState<ReferenceSwing | null>(null);
   const [referenceStatus, setReferenceStatus] = useState<ReferenceStatus>("loading");
-  const [referenceEntries, setReferenceEntries] = useState<LibraryEntry[]>([]);
+  const [referenceEntries, setReferenceEntries] = useState<ComparableEntry[]>([]);
   const [selectedReferenceId, setSelectedReferenceId] = useState<string | null>(null);
   const [compareMode, setCompareMode] = useState(false);
   const [naturalSpeed, setNaturalSpeed] = useState(false);
@@ -209,10 +223,21 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
   useEffect(() => {
     let cancelled = false;
     setReferenceStatus("loading");
-    listReferenceSwings()
-      .then((entries) => {
+    // Both stores are offered: curated reference technique, and your own past
+    // swings. A missing history endpoint (older backend) shouldn't cost you
+    // the library, so each source degrades to empty independently.
+    Promise.all([
+      listReferenceSwings().catch(() => []),
+      listSwings().then((body) => body.swings).catch(() => []),
+    ])
+      .then(([library, history]) => {
         if (cancelled) return;
-        const matches = matchingReferenceEntries(entries, view, handedness);
+        const candidates = [
+          ...library.map(libraryComparable),
+          // Comparing a swing against itself shows two identical videos.
+          ...history.filter((e) => e.id !== currentSwingId).map(historyComparable),
+        ];
+        const matches = matchingReferenceEntries(candidates, view, handedness);
         setReferenceEntries(matches);
         if (matches.length === 0) {
           setReference(null);
@@ -229,7 +254,7 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
     return () => {
       cancelled = true;
     };
-  }, [view, handedness]);
+  }, [view, handedness, currentSwingId]);
 
   useEffect(() => {
     const entry = referenceEntries.find((e) => e.id === selectedReferenceId);
@@ -662,11 +687,20 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, onReset }: Props)
                       value={selectedReferenceId ?? ""}
                       onChange={(e) => setSelectedReferenceId(e.target.value)}
                     >
-                      {referenceEntries.map((entry) => (
-                        <option key={entry.id} value={entry.id}>
-                          {entry.filename} · {new Date(entry.createdAt).toLocaleDateString()}
-                        </option>
-                      ))}
+                      {REFERENCE_GROUPS.map(({ source, label }) => {
+                        const group = referenceEntries.filter((e) => e.source === source);
+                        if (group.length === 0) return null;
+                        return (
+                          <optgroup key={source} label={label}>
+                            {group.map((entry) => (
+                              <option key={entry.id} value={entry.id}>
+                                {comparableName(entry)} ·{" "}
+                                {new Date(entry.createdAt).toLocaleDateString()}
+                              </option>
+                            ))}
+                          </optgroup>
+                        );
+                      })}
                     </select>
                   </div>
                 </div>
