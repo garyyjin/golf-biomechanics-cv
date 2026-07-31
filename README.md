@@ -59,6 +59,28 @@ library of reference swings to see whether they fall inside a normal range.
 - A normalized skeleton comparison diagram overlays your pose on the
   reference swing's pose at the same swing moment.
 
+### Swing history
+
+- Every analyzed swing is saved automatically — the upload is written
+  straight into a history entry rather than a temp file, so a single upload
+  serves both analysis and storage.
+- A **History** screen lists them newest-first with the overall score, date,
+  camera view, clubhead speed and tempo, plus a progress chart of score over
+  time (switchable to clubhead speed or tempo ratio). Rows can be renamed
+  (defaults to the filename, which phone clips repeat), reopened in the full
+  player, or removed. Swings are kept until you delete them; the page shows
+  the total disk in use rather than silently evicting anything.
+- Scores are stored alongside the benchmark generation they were computed
+  against. Since empirical benchmarks shift as the reference library grows, a
+  stored score can go stale — the history screen recomputes any that no
+  longer match, so the trend line compares like with like instead of mixing
+  yardsticks. Scoring lives in the frontend, so this reconciliation is
+  frontend-driven; only stale entries are re-fetched.
+- Past swings are also selectable as comparison references, so compare mode
+  can play today's swing against your own from a month ago. Reference-library
+  uploads deliberately stay out of history: that library is curated technique
+  to measure against and often isn't your swing at all.
+
 ### Reference swing library
 
 - Upload reference swings (analyzed at maximum accuracy), browse them in a
@@ -224,7 +246,7 @@ npm test
 
 | Method | Path | Description |
 | --- | --- | --- |
-| `POST` | `/analyze` | Upload a video (`mp4`/`mov`/`webm`) with `view`, `handedness`, `quality` ("fast" or "accurate") form fields; returns per-frame pose landmarks. |
+| `POST` | `/analyze` | Upload a video (`mp4`/`mov`/`webm`) with `view`, `handedness`, `quality` ("fast" or "accurate") form fields. Returns `job_id` (poll `GET /analyze/{job_id}` for progress and the per-frame landmarks) and `swing_id`, the history entry the upload was stored as. A failed analysis removes that entry. |
 | `POST` | `/reference-swings` | Upload a reference swing video; analyzed at max accuracy and added to the library. |
 | `GET` | `/reference-swings` | List reference swing library entries. |
 | `DELETE` | `/reference-swings/{id}` | Remove a reference swing and recompute benchmarks. |
@@ -232,3 +254,9 @@ npm test
 | `GET` | `/reference-swings/{id}/analysis` | Fetch a reference swing's stored per-frame analysis. |
 | `POST` | `/reference-swings/{id}/samples` | Save per-phase metric samples for a reference swing and recompute benchmarks. |
 | `GET` | `/benchmarks` | Get the current benchmark ranges (mean ± 1 std per view/phase/metric). |
+| `GET` | `/swings` | List analyzed swings (newest first, each with its stored summary) plus `totalBytes` of disk in use. |
+| `GET` | `/swings/{id}/analysis` | Fetch a saved swing's per-frame analysis. |
+| `GET` | `/swings/{id}/video` | Fetch a saved swing's video file. |
+| `POST` | `/swings/{id}/summary` | Store the frontend-computed scores for a swing, stamped with the benchmark generation they were scored against. |
+| `PATCH` | `/swings/{id}` | Rename a swing (`label`). |
+| `DELETE` | `/swings/{id}` | Remove a swing and its video; returns the remaining `totalBytes`. |

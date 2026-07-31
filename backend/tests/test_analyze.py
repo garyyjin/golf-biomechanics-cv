@@ -1,10 +1,19 @@
 import time
 
+import pytest
 from fastapi.testclient import TestClient
 
+from app import history
 from app.main import app
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def isolated_data_dir(tmp_path, monkeypatch):
+    # /analyze persists every upload into the swing history now, so without
+    # this the suite would write real videos into backend/data/.
+    monkeypatch.setattr(history, "DATA_DIR", tmp_path)
 
 
 def post_analyze(video_path, **overrides):

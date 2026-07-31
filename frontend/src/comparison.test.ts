@@ -17,9 +17,8 @@ import {
   sharedPhaseAnchors,
   syncTargetForPlan,
 } from "./comparison";
-import type { SyncPlan, TimeAnchor } from "./comparison";
+import type { ComparableEntry, SyncPlan, TimeAnchor } from "./comparison";
 import { LEFT_WRIST, RIGHT_WRIST } from "./geometry";
-import type { LibraryEntry } from "./libraryApi";
 import type { SwingPhases } from "./phases";
 import { makeLandmarks } from "./testUtils";
 import type { AnalysisResponse, PoseFrame } from "./types";
@@ -28,10 +27,10 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const ENTRIES: LibraryEntry[] = [
-  { id: "old", filename: "old.mp4", view: "face_on", handedness: "right", createdAt: "2026-01-01T00:00:00Z" },
-  { id: "new", filename: "new.mp4", view: "face_on", handedness: "right", createdAt: "2026-06-01T00:00:00Z" },
-  { id: "other-view", filename: "dtl.mp4", view: "down_the_line", handedness: "right", createdAt: "2026-07-01T00:00:00Z" },
+const ENTRIES: ComparableEntry[] = [
+  { id: "old", filename: "old.mp4", view: "face_on", handedness: "right", createdAt: "2026-01-01T00:00:00Z", source: "library" },
+  { id: "new", filename: "new.mp4", view: "face_on", handedness: "right", createdAt: "2026-06-01T00:00:00Z", source: "library" },
+  { id: "other-view", filename: "dtl.mp4", view: "down_the_line", handedness: "right", createdAt: "2026-07-01T00:00:00Z", source: "library" },
 ];
 
 const FPS = 30;
