@@ -31,9 +31,9 @@ export interface UseAnnotationsResult {
   setTool: (tool: AnnotationTool) => void;
   color: string;
   setColor: (color: string) => void;
-  hasStrokesOnFrame: boolean;
+  hasStrokes: boolean;
   undo: () => void;
-  clearFrame: () => void;
+  clearAll: () => void;
   onPointerDown: (e: PointerEvent<HTMLCanvasElement>) => void;
   onPointerMove: (e: PointerEvent<HTMLCanvasElement>) => void;
   onPointerUp: (e: PointerEvent<HTMLCanvasElement>) => void;
@@ -96,21 +96,19 @@ function drawStroke(ctx: CanvasRenderingContext2D, stroke: AnnotationStroke, w: 
 }
 
 /**
- * Freehand/shape annotation layer for a video, keyed per pose-frame index so
- * marks made while paused on one moment (e.g. top of backswing) don't bleed
- * into another. Strokes live in a ref (not state) since they can arrive at
- * pointer-move frequency; a small counter forces a re-render after each
- * completed mutation so callers relying on `hasStrokesOnFrame` stay current.
+ * Freehand/shape annotation layer for a video. Marks persist for the life of
+ * the clip and are drawn over every frame, so a line put down while paused (a
+ * shaft plane, a head-position circle) stays up as a fixed reference to watch
+ * the swing against. Strokes live in a ref (not state) since they can arrive
+ * at pointer-move frequency; a small counter forces a re-render after each
+ * completed mutation so callers relying on `hasStrokes` stay current.
  */
-export function useAnnotations(
-  frameIndex: number,
-  videoRef: RefObject<HTMLVideoElement | null>,
-): UseAnnotationsResult {
+export function useAnnotations(videoRef: RefObject<HTMLVideoElement | null>): UseAnnotationsResult {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [active, setActiveState] = useState(false);
   const [tool, setTool] = useState<AnnotationTool>("pen");
   const [color, setColor] = useState<string>(ANNOTATION_COLORS[0]);
-  const strokesByFrame = useRef<Map<number, AnnotationStroke[]>>(new Map());
+  const strokes = useRef<AnnotationStroke[]>([]);
   const drawingStroke = useRef<AnnotationStroke | null>(null);
   const [version, setVersion] = useState(0);
 
@@ -121,10 +119,11 @@ export function useAnnotations(
     const w = canvas.clientWidth;
     const h = canvas.clientHeight;
     ctx.clearRect(0, 0, w, h);
-    const strokes = strokesByFrame.current.get(frameIndex) ?? [];
     const pending = drawingStroke.current;
-    for (const stroke of pending ? [...strokes, pending] : strokes) drawStroke(ctx, stroke, w, h);
-  }, [frameIndex]);
+    for (const stroke of pending ? [...strokes.current, pending] : strokes.current) {
+      drawStroke(ctx, stroke, w, h);
+    }
+  }, []);
 
   useEffect(() => {
     redraw();
@@ -180,25 +179,23 @@ export function useAnnotations(
     const stroke = drawingStroke.current;
     if (!stroke) return;
     drawingStroke.current = null;
-    const existing = strokesByFrame.current.get(frameIndex) ?? [];
-    strokesByFrame.current.set(frameIndex, [...existing, stroke]);
+    strokes.current = [...strokes.current, stroke];
     setVersion((v) => v + 1);
-  }, [frameIndex]);
+  }, []);
 
   const undo = useCallback(() => {
-    const existing = strokesByFrame.current.get(frameIndex);
-    if (!existing || existing.length === 0) return;
-    strokesByFrame.current.set(frameIndex, existing.slice(0, -1));
+    if (strokes.current.length === 0) return;
+    strokes.current = strokes.current.slice(0, -1);
     setVersion((v) => v + 1);
-  }, [frameIndex]);
+  }, []);
 
-  const clearFrame = useCallback(() => {
-    if (!strokesByFrame.current.has(frameIndex)) return;
-    strokesByFrame.current.delete(frameIndex);
+  const clearAll = useCallback(() => {
+    if (strokes.current.length === 0) return;
+    strokes.current = [];
     setVersion((v) => v + 1);
-  }, [frameIndex]);
+  }, []);
 
-  const hasStrokesOnFrame = (strokesByFrame.current.get(frameIndex)?.length ?? 0) > 0;
+  const hasStrokes = strokes.current.length > 0;
 
   return {
     canvasRef,
@@ -208,9 +205,9 @@ export function useAnnotations(
     setTool,
     color,
     setColor,
-    hasStrokesOnFrame,
+    hasStrokes,
     undo,
-    clearFrame,
+    clearAll,
     onPointerDown,
     onPointerMove,
     onPointerUp,

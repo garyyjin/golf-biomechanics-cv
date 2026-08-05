@@ -512,7 +512,7 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, currentSwingId, o
 
   const currentIndex = frameIndexAt(time);
 
-  const annotations = useAnnotations(currentIndex, videoRef);
+  const annotations = useAnnotations(videoRef);
 
   const comparing = compareMode && referenceStatus !== "unavailable";
 
@@ -542,7 +542,7 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, currentSwingId, o
                     className={annotations.active ? "icon-button selected" : "icon-button"}
                     aria-pressed={annotations.active}
                     aria-label={annotations.active ? "Done drawing" : "Draw"}
-                    title="Draw on the paused frame to mark up your swing — marks stay attached to this frame"
+                    title="Draw on the video to mark up your swing — marks stay visible through playback"
                     onClick={() => annotations.setActive(!annotations.active)}
                   >
                     <PencilIcon />
@@ -582,7 +582,7 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, currentSwingId, o
                         className="icon-button"
                         aria-label="Undo"
                         title="Undo"
-                        disabled={!annotations.hasStrokesOnFrame}
+                        disabled={!annotations.hasStrokes}
                         onClick={annotations.undo}
                       >
                         <UndoIcon />
@@ -592,8 +592,8 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, currentSwingId, o
                         className="icon-button"
                         aria-label="Clear"
                         title="Clear"
-                        disabled={!annotations.hasStrokesOnFrame}
-                        onClick={annotations.clearFrame}
+                        disabled={!annotations.hasStrokes}
+                        onClick={annotations.clearAll}
                       >
                         <ClearIcon />
                       </button>
