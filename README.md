@@ -17,7 +17,9 @@ library of reference swings to see whether they fall inside a normal range.
   **Accurate** (complexity 2, MediaPipe's heaviest model).
 - The backend decodes the video with OpenCV (honoring rotation metadata
   from phone recordings) and runs MediaPipe Pose frame-by-frame, returning
-  33 raw pose landmarks per frame with timestamps.
+  33 raw pose landmarks per frame with timestamps, plus MediaPipe's metric
+  3D world pose (meters, origin at the mid-hip) used for the rotation
+  measurements below.
 
 ### Player with live pose overlay
 
@@ -43,11 +45,29 @@ library of reference swings to see whether they fall inside a normal range.
 - Phase chips in the player jump the video straight to each detected
   phase's frame.
 
+### Capture check
+
+- Every clip is audited for the things that quietly ruin an analysis: pose
+  coverage across the clip, head-to-feet framing and distance, frame rate,
+  whether a swing was actually detected, and — for down-the-line footage —
+  whether the camera sits on the target line. Each check reports what was
+  measured and what to change, and the panel opens itself when something
+  needs attention.
+- The same guidance is on the upload screen, so a better clip is easy to
+  shoot before it's a question of interpreting a bad one.
+
 ### Biomechanics feedback
 
 - Six metrics computed from the landmarks: spine tilt, shoulder turn, hip
   turn, X-factor (shoulder−hip separation), swing plane angle, and spine
   retention (change in spine tilt vs address).
+- Each phase reading is a short-window median around the detected phase
+  frame rather than a single-frame sample, so one blurred or mis-tracked
+  frame can't flip a metric across its range and move the score with it.
+- Every reading carries a confidence derived from the visibility of the
+  joints that particular metric depends on. A low-confidence reading is
+  still shown (with a label) but kept out of the swing score, instead of
+  quietly dragging the number down.
 - Metrics are scored at address, top, and impact against per-view
   benchmark ranges, each shown as within/below/above with the measured
   value, the target range, and a plain-English coaching tip. Clicking a
@@ -118,6 +138,25 @@ library of reference swings to see whether they fall inside a normal range.
 - A toggleable swing-path tracer draws the tracked clubhead's path over
   the video (red on the takeback, green on the downswing), frozen at
   impact rather than continuing through follow-through.
+
+### 3D rotation
+
+- Chest and pelvis rotation measured from MediaPipe's metric 3D pose in the
+  horizontal plane, relative to the golfer's own address alignment — so a
+  slightly open or closed setup isn't counted as a fault, and a turn toward
+  the camera doesn't collapse the way a screen-space angle does.
+- Reports chest and pelvis turn at the top, their separation (the 3D
+  counterpart of X-factor), peak chest turn across the backswing, and how
+  square the chest is at impact. Measurements use depth inferred from a
+  single camera, and the panel says so rather than implying marker-grade
+  precision.
+
+### Practice plan
+
+- Flagged metrics become at most three concrete drills, in swing order, each
+  with a cue and step-by-step instructions, and each one click away from the
+  moment in the video it refers to. Low-confidence readings are excluded —
+  advice built on a half-seen joint isn't worth acting on.
 
 ### Swing stats
 

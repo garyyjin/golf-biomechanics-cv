@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ANNOTATION_COLORS, ANNOTATION_TOOLS, useAnnotations } from "./annotations";
 import type { AnnotationTool } from "./annotations";
 import type { BenchmarkTable } from "./benchmarks";
+import { checkCapture } from "./captureCheck";
+import { CaptureCheckPanel } from "./CaptureCheckPanel";
 import { fillClubGaps, hasClubTrack } from "./club";
 import {
   anchorTimePairs,
@@ -15,16 +17,20 @@ import {
 } from "./comparison";
 import type { ComparableEntry, ReferenceSwing, SyncPlan } from "./comparison";
 import { CLUB_TRACER_COLOR, LINE_COLORS } from "./draw";
+import { buildPracticePlan } from "./drills";
 import { FeedbackPanel } from "./FeedbackPanel";
 import type { ReferenceStatus } from "./FeedbackPanel";
 import { computeFeedback } from "./feedback";
-import { computeAddressRefs, findAddressFrame, isDownTheLineMisaligned } from "./geometry";
+import { computeAddressRefs } from "./geometry";
 import type { OverlayLine } from "./geometry";
 import { listSwings } from "./historyApi";
 import { listReferenceSwings } from "./libraryApi";
 import { createOverlayRenderState, renderOverlayFrame } from "./overlayRenderer";
+import { PracticePanel } from "./PracticePanel";
 import { ReferenceVideo } from "./ReferenceVideo";
 import { StatsPanel } from "./StatsPanel";
+import { computeRotation3d } from "./rotation3d";
+import { RotationPanel } from "./RotationPanel";
 import { computeSwingStats } from "./stats";
 import { SwingScoreBadge } from "./SwingScoreBadge";
 import { computeSwingScore } from "./swingScore";
@@ -303,14 +309,21 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, currentSwingId, o
     [feedback.phases, frames],
   );
 
-  // Down-the-line footage is most accurate when the camera sits directly on
-  // the target line; a camera off to the side reveals stance width on
-  // screen that a well-aligned shot wouldn't show.
-  const alignmentWarning = useMemo(() => {
-    if (view !== "down_the_line") return false;
-    const address = findAddressFrame(frames);
-    return address ? isDownTheLineMisaligned(address.landmarks, aspect) : false;
-  }, [view, frames, aspect]);
+  // Setup quality: what the footage itself does and doesn't support. Shown
+  // near the top of the panel because every reading below inherits it.
+  const capture = useMemo(
+    () => checkCapture(analysis, feedback.phases),
+    [analysis, feedback.phases],
+  );
+
+  // Address-relative 3D turns from the world landmarks — the measurement the
+  // screen-space angles can't make once the body turns toward the camera.
+  const rotation = useMemo(
+    () => computeRotation3d(frames, feedback.phases),
+    [frames, feedback.phases],
+  );
+
+  const practicePlan = useMemo(() => buildPracticePlan(feedback), [feedback]);
 
   const frameIndexAt = useCallback(
     (mediaTime: number) =>
@@ -749,9 +762,15 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, currentSwingId, o
         >
           <SwingScoreBadge score={swingScore} />
 
+          <CaptureCheckPanel report={capture} />
+
           <StatsPanel stats={swingStats} />
 
           <TempoPanel tempo={swingTempo} />
+
+          <RotationPanel rotation={rotation} />
+
+          <PracticePanel focuses={practicePlan} onSeekToFrame={(frameIndex) => seekTo(frames[frameIndex].t)} />
 
           <aside className="readout-panel">
             <h2>{view === "face_on" ? "Face-on" : "Down-the-line"}</h2>
@@ -774,13 +793,6 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, currentSwingId, o
               <p className="readout-note">
                 Plane is a body-only approximation — most accurate with the camera aligned to
                 the target line
-              </p>
-            )}
-            {view === "down_the_line" && alignmentWarning && (
-              <p className="readout-note readout-warning">
-                Your feet look spread apart on screen for a down-the-line shot — the camera may
-                not be lined up with the target line, which can skew these readings. Try
-                positioning the camera directly behind the ball, in line with the target.
               </p>
             )}
           </aside>

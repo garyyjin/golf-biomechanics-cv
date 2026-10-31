@@ -26,15 +26,18 @@ const QUALITY_OPTIONS: { value: Quality; label: string }[] = [
 export function UploadScreen({ onAnalyzed }: Props) {
   const [file, setFile] = useState<File | null>(null);
   const [view, setView] = useState<View | null>(null);
-  const [handedness, setHandedness] = useState<Handedness | null>(null);
-  const [quality, setQuality] = useState<Quality | null>(null);
+  // Right-handed and the accurate model are the defaults: most golfers are
+  // right-handed, and accuracy is the reason to run a swing through this at
+  // all. The camera view has no sensible default — it changes which angles
+  // are measured — so it stays an explicit choice.
+  const [handedness, setHandedness] = useState<Handedness>("right");
+  const [quality, setQuality] = useState<Quality>("accurate");
   const [processing, setProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [job, setJob] = useState<AnalysisJobHandle | null>(null);
 
-  const ready =
-    file !== null && view !== null && handedness !== null && quality !== null && !processing;
+  const ready = file !== null && view !== null && !processing;
 
   async function submit() {
     if (!file || !view || !handedness || !quality) return;
@@ -168,6 +171,27 @@ export function UploadScreen({ onAnalyzed }: Props) {
           )}
         </div>
       )}
+
+      <section className="upload-tips" aria-label="How to film your swing">
+        <h2 className="upload-tips-title">Film it right</h2>
+        <ul>
+          <li>
+            <span className="upload-tip-index">01</span>
+            <span>Whole body in frame from head to feet, with room above your head and in
+            front of the ball.</span>
+          </li>
+          <li>
+            <span className="upload-tip-index">02</span>
+            <span>Face-on: camera at chest height, square to your chest. Down-the-line:
+            directly behind the ball, on the target line.</span>
+          </li>
+          <li>
+            <span className="upload-tip-index">03</span>
+            <span>30fps or higher on a steady mount, sun behind the camera. A tripod beats a
+            handed phone every time.</span>
+          </li>
+        </ul>
+      </section>
     </div>
   );
 }

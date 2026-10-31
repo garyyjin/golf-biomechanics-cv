@@ -5,6 +5,7 @@ import type { ReferenceSwing } from "./comparison";
 import { getCoachingTip } from "./coachingTips";
 import { PHASE_LABELS, PHASE_ORDER, SCORED_PHASES } from "./feedback";
 import type { FeedbackItem, FeedbackResult } from "./feedback";
+import { MIN_SCORE_CONFIDENCE } from "./measurement";
 import type { AnalysisResponse, View } from "./types";
 
 export type ReferenceStatus = "loading" | "loaded" | "unavailable";
@@ -160,6 +161,14 @@ export function FeedbackPanel({
                   {item.range && (
                     <span>
                       target {item.range.min.toFixed(0)}–{item.range.max.toFixed(0)}°
+                    </span>
+                  )}
+                  {item.confidence < MIN_SCORE_CONFIDENCE && item.status !== "undetected" && (
+                    <span
+                      className="feedback-confidence"
+                      title="The detector only partly saw the joints behind this reading, so it's shown but left out of the swing score"
+                    >
+                      low confidence
                     </span>
                   )}
                   {item.source && (
