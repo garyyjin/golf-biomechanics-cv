@@ -245,8 +245,9 @@ def _attach_detectors(record: dict, frame, width: int, height: int) -> dict:
 
     Kept off the pose workers on purpose: the club anchor needs the wrist
     from this frame's landmarks, and the YOLO models are a single shared
-    Torch graph that isn't safe to call from several threads at once. One
-    collector thread therefore runs both detectors in index order.
+    Torch graph that isn't safe to call from several threads at once. The
+    collector therefore runs both detectors itself, in arrival order — the
+    record is filed by frame index afterwards, so the order doesn't matter.
     """
     landmarks = record["landmarks"]
     hand_point = _wrist_point(landmarks, width, height) if landmarks is not None else None
@@ -273,7 +274,8 @@ def _read_rotated(capture, rotate_code):
 def _analyze_sequential(
     capture, first_frame, rotate_code, quality, fps, width, height, total_frames, on_progress
 ) -> list[dict]:
-    """Single-threaded fallback for machines with one usable core."""
+    """Single-threaded fallback: one usable core, or a frame count that
+    can't be sliced across workers."""
     frames = []
     index = 0
     with _make_pose(quality) as pose:
