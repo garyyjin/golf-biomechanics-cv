@@ -16,6 +16,7 @@ detect_club always returns None so pose extraction still works without it.
 """
 
 import math
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -23,13 +24,21 @@ from typing import Any
 MODEL_PATH = Path(__file__).resolve().parent / "models" / "clubhead.pt"
 CONFIDENCE_THRESHOLD = 0.25
 
+# Torch defaults to one thread per core, which badly oversubscribes a single
+# 640px input: measured on a 16-thread machine, one detection takes ~36 ms with
+# four threads but ~75-88 ms with sixteen. Four is also what leaves the rest of
+# the cores to the pose workers in app/pose.py.
+_TORCH_THREADS = 4
+
 
 @lru_cache(maxsize=1)
 def _load_model() -> Any | None:
     if not MODEL_PATH.exists():
         return None
+    import torch
     from ultralytics import YOLO
 
+    torch.set_num_threads(max(1, min(_TORCH_THREADS, os.cpu_count() or 1)))
     return YOLO(str(MODEL_PATH))
 
 

@@ -71,6 +71,20 @@ def test_analyze_video_reports_progress(sample_video):
     assert all(c[1] == calls[0][1] for c in calls)
 
 
+def test_analyze_video_parallel_workers_keep_frame_order(sample_video, monkeypatch):
+    # Force the pooled path even on a single-core CI box. Workers take
+    # contiguous slices and finish out of order, so the frame stream and the
+    # progress indices must still come back strictly sequential, with every
+    # frame covered exactly once.
+    monkeypatch.setattr("app.pose._worker_count", lambda: 3)
+    calls = []
+    result = analyze_video(
+        str(sample_video), on_progress=lambda index, total: calls.append((index, total))
+    )
+    assert [f["index"] for f in result["frames"]] == list(range(10))
+    assert [c[0] for c in calls] == list(range(1, 11))
+
+
 def test_analyze_video_includes_club_tip_yolo_key(sample_video):
     result = analyze_video(str(sample_video))
     # Shape-only: club_tip_yolo is None with no clubhead.pt installed, but a

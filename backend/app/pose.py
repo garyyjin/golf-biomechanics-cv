@@ -2,6 +2,9 @@
 
 import logging
 import math
+import os
+import queue
+import threading
 from collections.abc import Callable
 
 import cv2
@@ -14,6 +17,18 @@ logger = logging.getLogger(__name__)
 
 # model_complexity: 1 ("fast") vs 2 ("accurate", MediaPipe's heaviest model).
 _MODEL_COMPLEXITY = {"fast": 1, "accurate": 2}
+
+# Parallel pose extraction: one MediaPipe graph per worker, each fed its own
+# frame. Four is deliberate — per-frame inference measures ~205 ms on one
+# thread and ~74 ms with four, but gets *slower* past that (six: ~89 ms,
+# eight: ~171 ms) because MediaPipe already runs its own internal pool and
+# the extra threads just contend for the same cores.
+_MAX_WORKERS = 4
+
+# Sentinels passed through the worker queues: one marks a worker/decoder exit,
+# the other carries an exception back to the collector thread.
+_WORKER_DONE = object()
+_ERROR = object()
 
 _ROTATE_CODES = {
     90: cv2.ROTATE_90_CLOCKWISE,
@@ -172,6 +187,219 @@ def _detect_club_tip(frame, landmarks: list[dict], width: int, height: int) -> d
     return {"x": best_point[0] / width, "y": best_point[1] / height}
 
 
+def _make_pose(quality: str):
+    # smooth_landmarks=False: the API smooths by default, but downstream
+    # consumers need raw per-frame values.
+    # min_detection_confidence left at the MediaPipe default (0.5): raising it
+    # would drop more landmarks on fast, motion-blurred downswing/impact
+    # frames, which is exactly where accuracy matters most. min_tracking_confidence
+    # is raised so the tracker falls back to full re-detection instead of
+    # extrapolating from a degrading track — the usual failure mode on fast
+    # sports motion.
+    return mp.solutions.pose.Pose(
+        static_image_mode=False,
+        model_complexity=_MODEL_COMPLEXITY.get(quality, 1),
+        smooth_landmarks=False,
+        min_detection_confidence=0.5,
+        min_tracking_confidence=0.7,
+    )
+
+
+def _extract_pose(pose, frame, index: int, fps: float, width: int, height: int) -> dict:
+    """Pose landmarks (+ world landmarks) and the Hough club tip for one
+    frame. Everything here depends only on this frame, so it is safe to run
+    on a worker thread with its own MediaPipe graph."""
+    result = pose.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+    landmarks = None
+    world_landmarks = None
+    club_tip = None
+    if result.pose_landmarks is not None:
+        landmarks = [
+            {
+                "x": lm.x,
+                "y": lm.y,
+                "z": lm.z,
+                "visibility": lm.visibility,
+            }
+            for lm in result.pose_landmarks.landmark
+        ]
+        club_tip = _detect_club_tip(frame, landmarks, width, height)
+        if result.pose_world_landmarks is not None:
+            world_landmarks = [
+                {"x": lm.x, "y": lm.y, "z": lm.z}
+                for lm in result.pose_world_landmarks.landmark
+            ]
+    return {
+        "index": index,
+        "t": index / fps,
+        "landmarks": landmarks,
+        "world_landmarks": world_landmarks,
+        "club_tip": club_tip,
+        "club_tip_yolo": None,
+        "ball_tip": None,
+    }
+
+
+def _attach_detectors(record: dict, frame, width: int, height: int) -> dict:
+    """Add the two YOLO readings to a finished pose record.
+
+    Kept off the pose workers on purpose: the club anchor needs the wrist
+    from this frame's landmarks, and the YOLO models are a single shared
+    Torch graph that isn't safe to call from several threads at once. One
+    collector thread therefore runs both detectors in index order.
+    """
+    landmarks = record["landmarks"]
+    hand_point = _wrist_point(landmarks, width, height) if landmarks is not None else None
+    record["club_tip_yolo"] = detect_club(frame, hand_point)
+    record["ball_tip"] = detect_ball(frame)
+    return record
+
+
+def _worker_count() -> int:
+    return max(1, min(_MAX_WORKERS, os.cpu_count() or 1))
+
+
+def _read_rotated(capture, rotate_code):
+    """Next frame, already in the orientation a browser would render, or
+    None at end of stream."""
+    ok, frame = capture.read()
+    if not ok:
+        return None
+    if rotate_code is not None:
+        frame = cv2.rotate(frame, rotate_code)
+    return frame
+
+
+def _analyze_sequential(
+    capture, first_frame, rotate_code, quality, fps, width, height, total_frames, on_progress
+) -> list[dict]:
+    """Single-threaded fallback for machines with one usable core."""
+    frames = []
+    index = 0
+    with _make_pose(quality) as pose:
+        frame = first_frame
+        while frame is not None:
+            record = _extract_pose(pose, frame, index, fps, width, height)
+            frames.append(_attach_detectors(record, frame, width, height))
+            index += 1
+            if on_progress is not None:
+                on_progress(index, total_frames)
+            frame = _read_rotated(capture, rotate_code)
+    return frames
+
+
+def _analyze_parallel(
+    path, quality, fps, width, height, total_frames, on_progress, workers, rotate_code
+) -> list[dict]:
+    """Run pose on a small pool of frames, with the detectors on this thread.
+
+    Each worker takes a *contiguous* slice of the clip and decodes it with its
+    own capture, rather than being handed every Nth frame: MediaPipe's video
+    mode carries a tracker between calls, and feeding one tracker frames four
+    apart measurably corrupts it — on a test clip it produced a landmark jump
+    of 60% of the frame width mid-swing, which would wreck impact detection.
+    Consecutive frames per worker keep each tracker's history intact.
+
+    The split follows what each stage costs on a 1080x1920 clip: pose is
+    ~205 ms/frame and parallelises well, while the YOLO detections are ~36 ms
+    and must stay on one thread anyway (a single shared Torch graph, plus they
+    need this frame's wrist landmarks as an anchor). They run here as records
+    come back. A bounded results queue keeps only a handful of decoded frames
+    alive at once, and records are re-ordered here so `frames` and on_progress
+    stay strictly in index order regardless of which worker finished first.
+    """
+    chunk = max(1, math.ceil(total_frames / workers))
+    results: queue.Queue = queue.Queue(maxsize=workers * 2)
+    aborted = threading.Event()
+
+    def work(worker_index: int) -> None:
+        pose = None
+        capture = None
+        start = worker_index * chunk
+        # The last worker reads to end-of-stream rather than to the reported
+        # frame count: containers that under-report it would otherwise leave
+        # the tail of the clip unanalysed.
+        end = None if worker_index == workers - 1 else (worker_index + 1) * chunk
+        try:
+            # Inside the try: a graph or decoder that fails must still report
+            # back, or the collector would wait on this worker forever.
+            pose = _make_pose(quality)
+            capture = cv2.VideoCapture(path, cv2.CAP_FFMPEG)
+            if not capture.isOpened():
+                raise ValueError("could not decode video")
+            # Every worker decodes from the start and skips to its slice.
+            # Seeking would be faster but CAP_PROP_POS_FRAMES is unreliable
+            # across codecs, and a few frames of drift would mislabel every
+            # timestamp in the slice.
+            index = 0
+            while index < start and not aborted.is_set():
+                if not capture.grab():
+                    break
+                index += 1
+            while (end is None or index < end) and not aborted.is_set():
+                ok, frame = capture.read()
+                if not ok:
+                    break
+                if rotate_code is not None:
+                    frame = cv2.rotate(frame, rotate_code)
+                record = _extract_pose(pose, frame, index, fps, width, height)
+                # Bounded put, so a worker that runs ahead of the collector
+                # can't pile decoded frames up in memory.
+                while not aborted.is_set():
+                    try:
+                        results.put((index, record, frame), timeout=0.1)
+                        break
+                    except queue.Full:
+                        continue
+                index += 1
+        except BaseException as exc:
+            aborted.set()
+            results.put((_ERROR, exc, None))
+        finally:
+            if capture is not None:
+                capture.release()
+            if pose is not None:
+                pose.close()
+            results.put(_WORKER_DONE)
+
+    pool = [
+        threading.Thread(target=work, args=(i,), name=f"pose-worker-{i}", daemon=True)
+        for i in range(workers)
+    ]
+    for thread in pool:
+        thread.start()
+
+    frames: list[dict] = []
+    order: dict[int, dict] = {}
+    next_index = 0
+    finished_workers = 0
+    error: BaseException | None = None
+    while finished_workers < workers:
+        item = results.get()
+        if item is _WORKER_DONE:
+            finished_workers += 1
+            continue
+        key, payload, frame = item
+        if key is _ERROR:
+            error = error or payload
+            continue
+        index = key
+        _attach_detectors(payload, frame, width, height)
+        order[index] = payload
+        while next_index in order:
+            frames.append(order.pop(next_index))
+            next_index += 1
+            if on_progress is not None:
+                on_progress(next_index, total_frames)
+
+    for thread in pool:
+        thread.join()
+
+    if error is not None:
+        raise error
+    return frames
+
+
 def analyze_video(
     path: str,
     quality: str = "fast",
@@ -245,82 +473,28 @@ def analyze_video(
     height = 0
     total_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
 
-    frames = []
-    hough_hits = 0
-    yolo_hits = 0
-    ball_hits = 0
-    # smooth_landmarks=False: the API smooths by default, but downstream
-    # consumers need raw per-frame values.
-    # min_detection_confidence left at the MediaPipe default (0.5): raising it
-    # would drop more landmarks on fast, motion-blurred downswing/impact
-    # frames, which is exactly where accuracy matters most. min_tracking_confidence
-    # is raised so the tracker falls back to full re-detection instead of
-    # extrapolating from a degrading track — the usual failure mode on fast
-    # sports motion.
-    with mp.solutions.pose.Pose(
-        static_image_mode=False,
-        model_complexity=_MODEL_COMPLEXITY.get(quality, 1),
-        smooth_landmarks=False,
-        min_detection_confidence=0.5,
-        min_tracking_confidence=0.7,
-    ) as pose:
-        index = 0
-        while True:
-            ok, frame = capture.read()
-            if not ok:
-                break
-            if rotate_code is not None:
-                frame = cv2.rotate(frame, rotate_code)
-            if index == 0:
-                # Dimensions from the decoded (and now rotated) frame, not
-                # container props — props can disagree with the delivered
-                # orientation.
-                height, width = frame.shape[:2]
-            result = pose.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-            landmarks = None
-            world_landmarks = None
-            club_tip = None
-            if result.pose_landmarks is not None:
-                landmarks = [
-                    {
-                        "x": lm.x,
-                        "y": lm.y,
-                        "z": lm.z,
-                        "visibility": lm.visibility,
-                    }
-                    for lm in result.pose_landmarks.landmark
-                ]
-                club_tip = _detect_club_tip(frame, landmarks, width, height)
-                if result.pose_world_landmarks is not None:
-                    world_landmarks = [
-                        {"x": lm.x, "y": lm.y, "z": lm.z}
-                        for lm in result.pose_world_landmarks.landmark
-                    ]
-            hand_point = _wrist_point(landmarks, width, height) if landmarks is not None else None
-            club_tip_yolo = detect_club(frame, hand_point)
-            ball_tip = detect_ball(frame)
-            if club_tip is not None:
-                hough_hits += 1
-            if club_tip_yolo is not None:
-                yolo_hits += 1
-            if ball_tip is not None:
-                ball_hits += 1
-            frames.append(
-                {
-                    "index": index,
-                    "t": index / fps,
-                    "landmarks": landmarks,
-                    "world_landmarks": world_landmarks,
-                    "club_tip": club_tip,
-                    "club_tip_yolo": club_tip_yolo,
-                    "ball_tip": ball_tip,
-                }
-            )
-            index += 1
-            if on_progress is not None:
-                on_progress(index, total_frames)
+    # Dimensions from the first decoded (and now rotated) frame, not container
+    # props — props can disagree with the delivered orientation.
+    first_frame = _read_rotated(capture, rotate_code)
+    if first_frame is None:
+        capture.release()
+        raise ValueError("could not decode video")
+    height, width = first_frame.shape[:2]
 
-    capture.release()
+    workers = _worker_count()
+    try:
+        # A missing/zero frame count can't be sliced across workers, and one
+        # core can't run them anyway.
+        if workers == 1 or total_frames <= 0:
+            frames = _analyze_sequential(
+                capture, first_frame, rotate_code, quality, fps, width, height, total_frames, on_progress
+            )
+        else:
+            frames = _analyze_parallel(
+                path, quality, fps, width, height, total_frames, on_progress, workers, rotate_code
+            )
+    finally:
+        capture.release()
 
     if not frames:
         raise ValueError("could not decode video")
@@ -332,9 +506,9 @@ def analyze_video(
     logger.info(
         "club/ball detection hit rates over %d frames: hough=%d yolo=%d ball=%d",
         len(frames),
-        hough_hits,
-        yolo_hits,
-        ball_hits,
+        sum(1 for f in frames if f["club_tip"] is not None),
+        sum(1 for f in frames if f["club_tip_yolo"] is not None),
+        sum(1 for f in frames if f["ball_tip"] is not None),
     )
 
     return {
