@@ -28,6 +28,9 @@ import { listReferenceSwings } from "./libraryApi";
 import { createOverlayRenderState, renderOverlayFrame } from "./overlayRenderer";
 import { PracticePanel } from "./PracticePanel";
 import { ReferenceVideo } from "./ReferenceVideo";
+import { buildReportCard } from "./reportCard";
+import type { ReportCardModel } from "./reportCard";
+import { ReportDialog } from "./ReportDialog";
 import { StatsPanel } from "./StatsPanel";
 import { computeRotation3d } from "./rotation3d";
 import { RotationPanel } from "./RotationPanel";
@@ -109,6 +112,7 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, currentSwingId, o
   const [masterEnded, setMasterEnded] = useState(false);
   const [showSkeleton, setShowSkeleton] = useState(true);
   const [showClubPath, setShowClubPath] = useState(true);
+  const [report, setReport] = useState<ReportCardModel | null>(null);
 
   // Compare mode: both slots must resolve to the exact same height, or the
   // two swings visibly don't line up. Deriving each slot's width from its
@@ -324,6 +328,23 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, currentSwingId, o
   );
 
   const practicePlan = useMemo(() => buildPracticePlan(feedback), [feedback]);
+
+  /** Built when the dialog opens rather than on every render, so the dated
+   * card always reflects the moment it was actually shared. */
+  const openReport = useCallback(() => {
+    setReport(
+      buildReportCard({
+        analysis,
+        feedback,
+        score: swingScore,
+        stats: swingStats,
+        tempo: swingTempo,
+        rotation,
+        capture,
+        generatedAt: new Date(),
+      }),
+    );
+  }, [analysis, feedback, swingScore, swingStats, swingTempo, rotation, capture]);
 
   const frameIndexAt = useCallback(
     (mediaTime: number) =>
@@ -898,12 +919,22 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, currentSwingId, o
         >
           Compare
         </button>
+        <button
+          type="button"
+          className="report-open"
+          title="Save a one-page summary of this swing as an image you can send to a coach or keep for yourself"
+          onClick={openReport}
+        >
+          Share report
+        </button>
       </div>
 
       <p className="hint">Space: play/pause · ← →: step one frame</p>
       <button type="button" className="reset" onClick={onReset}>
         Analyze another video
       </button>
+
+      {report && <ReportDialog report={report} onClose={() => setReport(null)} />}
     </div>
   );
 }

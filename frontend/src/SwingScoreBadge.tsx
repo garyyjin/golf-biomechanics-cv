@@ -1,14 +1,9 @@
+import { SCORE_BAND_LABEL } from "./swingScore";
 import type { ScoreBand, SwingScore } from "./swingScore";
 
 interface Props {
   score: SwingScore;
 }
-
-const BAND_LABEL: Record<ScoreBand, string> = {
-  good: "Solid swing",
-  fair: "Getting there",
-  poor: "Needs work",
-};
 
 const BAND_CAPTION: Record<ScoreBand, string> = {
   good: "Most of your key positions are inside the target ranges.",
@@ -59,7 +54,7 @@ export function SwingScoreBadge({ score }: Props) {
       <div className="swing-score-copy">
         <span className="swing-score-title">Swing score</span>
         <span className="swing-score-band">
-          {band ? BAND_LABEL[band] : "Not enough detected"}
+          {band ? SCORE_BAND_LABEL[band] : "Not enough detected"}
         </span>
         <p className="swing-score-caption">
           {band

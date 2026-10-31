@@ -3,6 +3,14 @@ import { MIN_SCORE_CONFIDENCE } from "./measurement.ts";
 
 export type ScoreBand = "good" | "fair" | "poor";
 
+/** Display names shared by the player badge and the exported report, so the
+ * two can never describe the same score differently. */
+export const SCORE_BAND_LABEL: Record<ScoreBand, string> = {
+  good: "Solid swing",
+  fair: "Getting there",
+  poor: "Needs work",
+};
+
 export interface SwingScore {
   /** 0–100, or null when no scored metric was detected on this swing. */
   overall: number | null;

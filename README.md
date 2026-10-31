@@ -158,6 +158,18 @@ library of reference swings to see whether they fall inside a normal range.
   moment in the video it refers to. Low-confidence readings are excluded —
   advice built on a half-seen joint isn't worth acting on.
 
+### Shareable report
+
+- **Share report** in the player renders a one-page 1080×1620 PNG: score,
+  clubhead/ball speed and carry, tempo, 3D rotation, any setup checks worth
+  knowing about, and up to three things to work on with the coaching cue for
+  each. It's previewed in a dialog before saving.
+- Drawn on the user's own device with Canvas 2D — nothing is uploaded to a
+  screenshot service — and can be downloaded or copied straight to the
+  clipboard to send to a coach. The card is built from the same scoring,
+  tempo, rotation and capture functions the player shows, so the image can't
+  disagree with the screen it came from.
+
 ### Swing stats
 
 - Clubhead speed, estimated ball speed, and estimated carry distance,
