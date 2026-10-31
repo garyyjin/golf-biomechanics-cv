@@ -178,14 +178,13 @@ function strokeTrailSegment(
 // The trail records one point per rendered video frame, but the drawn path
 // shouldn't be that fine-grained -- at 30-60fps, per-frame detector noise
 // (a pixel or two of jitter) reads as visible kinks when every single frame
-// is a curve anchor. Averaging over a wider neighborhood than any one frame
-// smooths those kinks out; this only affects what gets drawn; the
-// underlying trail (and the live tip position derived from it elsewhere)
-// keeps its real per-frame data. Kept fairly small on purpose: a wider
-// window also rounds off real sharp turns -- most visibly the top of the
-// backswing, an actual direction reversal -- into a softer curve that
-// undershoots how far the swing really goes back.
-const TRAIL_SMOOTHING_WINDOW = 5;
+// is a curve anchor. Most of that noise is already gone before it gets here:
+// club.ts builds the trail as a rigid club (smoothed shaft angle and club
+// length, anchored to the grip), so only a light 3-point pass is needed.
+// Kept small on purpose: a wider window also rounds off real sharp turns --
+// most visibly the top of the backswing, an actual direction reversal -- into
+// a softer curve that undershoots how far the swing really goes back.
+const TRAIL_SMOOTHING_WINDOW = 3;
 
 /**
  * Symmetric moving average over each point's (up to) `window` nearest

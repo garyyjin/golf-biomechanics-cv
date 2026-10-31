@@ -101,10 +101,11 @@ def _detect_club_tip(frame, landmarks: list[dict], width: int, height: int) -> d
     requiring both left this detecting almost nothing on real down-the-line
     footage even though the visible hand alone is enough to anchor a search.
 
-    Returns None (the frontend then falls back to the body-pose estimate)
-    when neither hand is visible or no confident line is found — motion
-    blur, low contrast, and an occluded club are all realistic failure modes
-    for a technique built on visible edges rather than a trained detector.
+    Returns None when neither hand is visible or no confident line is found
+    — motion blur, low contrast, and an occluded club are all realistic
+    failure modes for a technique built on visible edges rather than a
+    trained detector. The frontend's tracer prefers the YOLO clubhead track
+    and only consults this point on frames YOLO misses.
     """
     ls, rs = landmarks[_LEFT_SHOULDER], landmarks[_RIGHT_SHOULDER]
     if min(ls["visibility"], rs["visibility"]) < _VISIBILITY_THRESHOLD:
@@ -423,8 +424,9 @@ def analyze_video(
     data for evaluating the two approaches side by side, not a replacement.
     Always None until backend/app/models/clubhead.pt exists. When landmarks
     are available, the more-visible wrist is passed in as an anchor so
-    detect_club can return the clubhead's tip (farthest box corner) rather
-    than its center; with no landmarks this frame, it falls back to center.
+    detect_club can return the clubhead's tip (the box's far edge along the
+    hand-to-head direction) rather than its center; with no landmarks this
+    frame, it falls back to center.
 
     Also carries ball_tip — a {x, y, width, height} normalized ball box from
     a separate per-frame YOLOv8n ball detector (see app/ball.py), where

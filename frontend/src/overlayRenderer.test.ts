@@ -123,12 +123,12 @@ describe("renderOverlayFrame's club trail", () => {
     expect(state.clubTrail.map((p) => p.frameIndex)).toEqual([0, 1, 9]);
   });
 
-  it("falls back to the body-pose estimate on a YOLO miss instead of stopping the trail short", () => {
+  it("leaves a missed detection as a gap instead of substituting a body-pose guess", () => {
     const ctx = fakeCtx();
     const state = createOverlayRenderState();
-    // shoulder-mid (0.5,0.3) to hip-mid (0.5,0.7): torso length 0.4, shaft
-    // length 0.4 * 1.6 = 0.64; knuckles straight above the wrists -> estimate
-    // extends straight up to (0.5, -0.04).
+    // A body-pose estimate would happily place the club here (knuckles straight
+    // above the wrists, 1.6 torso lengths up) -- the trail must not use it: the
+    // track built by club.ts already decides where the club is.
     const landmarks = makeLandmarks({
       [LEFT_SHOULDER]: { x: 0.4, y: 0.3 },
       [RIGHT_SHOULDER]: { x: 0.6, y: 0.3 },
@@ -139,16 +139,18 @@ describe("renderOverlayFrame's club trail", () => {
       [LEFT_INDEX]: { x: 0.5, y: 0.5 },
       [RIGHT_INDEX]: { x: 0.5, y: 0.5 },
     });
-    const frames: PoseFrame[] = [{ index: 0, t: 0, landmarks, club_tip_yolo: null }];
+    const frames: PoseFrame[] = [
+      { index: 0, t: 0, landmarks, club_tip_yolo: { x: 0.2, y: 0.8 } },
+      { index: 1, t: 1 / 30, landmarks, club_tip_yolo: null },
+    ];
 
-    renderOverlayFrame(ctx, 100, 100, 0, frames, "face_on", "right", 1, ADDRESS_REFS, state, {
-      yoloTrack: [null],
+    renderOverlayFrame(ctx, 100, 100, 1, frames, "face_on", "right", 1, ADDRESS_REFS, state, {
+      yoloTrack: [{ x: 0.2, y: 0.8 }, null],
       topIndex: null,
       impactIndex: null,
     });
 
-    expect(state.clubTrail).toHaveLength(1);
-    expect(state.clubTrail[0].x).toBeCloseTo(0.5, 1);
-    expect(state.clubTrail[0].y).toBeCloseTo(-0.04, 1);
+    expect(state.clubTrail.map((p) => p.frameIndex)).toEqual([0]);
+    expect(state.clubTrail[0]).toEqual({ x: 0.2, y: 0.8, frameIndex: 0 });
   });
 });

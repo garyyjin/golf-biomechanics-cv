@@ -1,4 +1,3 @@
-import { resolveClubTip } from "./club.ts";
 import type { ClubPoint } from "./club.ts";
 import { drawClubTracer, drawOverlayLines, drawSkeleton } from "./draw.ts";
 import { computeOverlayLines } from "./geometry.ts";
@@ -34,7 +33,8 @@ export function createOverlayRenderState(): OverlayRenderState {
  *
  * The club tracer is opt-in: ReferenceVideo never passes clubTracer (no
  * tracer on the reference swing), while PlayerScreen passes it whenever the
- * analysis has any YOLO clubhead detections at all (see hasClubTrack).
+ * analysis has any clubhead detections at all (see hasClubTrack), with the
+ * track already refined by fillClubGaps.
  * showSkeleton defaults to true (ReferenceVideo doesn't offer a toggle) and
  * only affects the bones/joints drawing.
  */
@@ -77,7 +77,12 @@ export function renderOverlayFrame(
     const lastIndex = impactIndex === null ? index : Math.min(index, impactIndex);
     const trail: ClubTrailPoint[] = [];
     for (let i = 0; i <= lastIndex; i++) {
-      const tip = resolveClubTip(i, yoloTrack, frames[i].landmarks, handedness);
+      // The track is already the grip-anchored, length-checked club path
+      // (club.ts's buildClubTrack via fillClubGaps) and it alone decides
+      // where the club is: a frame with no point is a genuine miss, and
+      // fabricating a body-pose guess there is what used to throw the trail
+      // off by a body length and back.
+      const tip = yoloTrack?.[i] ?? null;
       if (tip) trail.push({ ...tip, frameIndex: i });
     }
     state.clubTrail = trail;

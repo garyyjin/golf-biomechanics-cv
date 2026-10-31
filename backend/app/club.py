@@ -42,6 +42,37 @@ def _load_model() -> Any | None:
     return YOLO(str(MODEL_PATH))
 
 
+def _tip_from_box(
+    box: tuple[float, float, float, float],
+    hand_point: tuple[float, float] | None,
+) -> tuple[float, float]:
+    """Pixel-space clubhead tip: the far edge of the box along the direction
+    it sits from the grip.
+
+    Taking the box *corner* farthest from the hand looks equivalent but is
+    not: as the shaft swings, the farthest corner flips between the box's
+    corners, so consecutive frames can report points a whole box diagonal
+    apart even when the head barely moved -- visible as jitter in the tracer.
+    The box's support point along the (continuous) hand-to-box direction
+    moves smoothly with the swing instead, while still landing on the toe
+    side of the head rather than its center. Falls back to the center when
+    no hand position is available or the hand sits exactly on the center.
+    """
+    x1, y1, x2, y2 = box
+    center_x, center_y = (x1 + x2) / 2, (y1 + y2) / 2
+    if hand_point is None:
+        return center_x, center_y
+    hx, hy = hand_point
+    dx, dy = center_x - hx, center_y - hy
+    length = math.hypot(dx, dy)
+    if length < 1e-6:
+        return center_x, center_y
+    ux, uy = dx / length, dy / length
+    # Half the box's own extent along that direction (its support function).
+    half_extent = 0.5 * (abs(ux) * (x2 - x1) + abs(uy) * (y2 - y1))
+    return center_x + ux * half_extent, center_y + uy * half_extent
+
+
 def detect_club(
     frame_bgr: Any, hand_point: tuple[float, float] | None = None
 ) -> dict[str, float] | None:
@@ -50,11 +81,11 @@ def detect_club(
     above CONFIDENCE_THRESHOLD.
 
     hand_point, if given, is the pixel-space (x, y) of the golfer's grip
-    (see pose.py's wrist selection) — the box corner farthest from it is
-    returned as the clubhead tip (the toe, the end that actually strikes the
-    ball) rather than the box center, which sits nearer the hosel/shaft side
-    of a box that spans the whole clubhead. Falls back to the box center
-    when no hand position is available (e.g. no pose landmarks this frame).
+    (see pose.py's wrist selection) — the detection is projected onto the far
+    edge of its box (see _tip_from_box) so the returned point sits on the end
+    of the clubhead that actually strikes the ball, not its center. Falls back
+    to the box center when no hand position is available (e.g. no pose
+    landmarks this frame).
     """
     model = _load_model()
     if model is None:
@@ -76,11 +107,5 @@ def detect_club(
     if best_box is None:
         return None
 
-    x1, y1, x2, y2 = best_box
-    if hand_point is None:
-        point_x, point_y = (x1 + x2) / 2, (y1 + y2) / 2
-    else:
-        hx, hy = hand_point
-        corners = [(x1, y1), (x2, y1), (x1, y2), (x2, y2)]
-        point_x, point_y = max(corners, key=lambda c: math.hypot(c[0] - hx, c[1] - hy))
+    point_x, point_y = _tip_from_box(best_box, hand_point)
     return {"x": point_x / width, "y": point_y / height}

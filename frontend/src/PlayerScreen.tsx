@@ -294,10 +294,11 @@ export function PlayerScreen({ videoUrl, analysis, benchmarks, currentSwingId, o
     [frames, handedness, aspect],
   );
 
-  // YOLO clubhead detections, with short misses bridged. Empty of detections
-  // when the analysis came from a backend with no clubhead.pt installed --
-  // that's when the tracer doesn't render at all (see clubTracer below).
-  const clubTrack = useMemo(() => fillClubGaps(frames), [frames]);
+  // Grip-anchored clubhead track, with short misses bridged (see club.ts's
+  // buildClubTrack). Empty of detections when the analysis came from a
+  // backend with no clubhead.pt installed -- that's when the tracer doesn't
+  // render at all (see clubTracer below).
+  const clubTrack = useMemo(() => fillClubGaps(frames, handedness, aspect), [frames, handedness, aspect]);
   const yoloAvailable = useMemo(() => hasClubTrack(clubTrack), [clubTrack]);
 
   const feedback = useMemo(() => computeFeedback(analysis, benchmarks), [analysis, benchmarks]);
