@@ -93,6 +93,19 @@ def test_analyze_video_includes_ball_tip_key(sample_video):
     )
 
 
+def test_analyze_video_includes_world_landmarks_key(sample_video):
+    result = analyze_video(str(sample_video))
+    # sample_video has no person, so there are no 2D or 3D landmarks -- this
+    # confirms the key is always present and carries 3 coordinates per point
+    # when a pose is found, without pinning detector output for real footage.
+    assert all("world_landmarks" in f for f in result["frames"])
+    assert all(f["world_landmarks"] is None for f in result["frames"])
+    assert all(
+        f["world_landmarks"] is None or set(f["world_landmarks"][0]) == {"x", "y", "z"}
+        for f in result["frames"]
+    )
+
+
 def test_detect_club_tip_finds_a_drawn_line_from_the_hands():
     width = height = 200
     frame = np.full((height, width, 3), 255, dtype=np.uint8)

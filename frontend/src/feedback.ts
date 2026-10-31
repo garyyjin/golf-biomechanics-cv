@@ -1,8 +1,10 @@
 import type { BenchmarkTable, MetricId, MetricRange, Phase } from "./benchmarks.ts";
-import { hipLine, shoulderLine, spineLine, swingPlaneLine } from "./geometry.ts";
 import { detectPhases } from "./phases.ts";
 import type { SwingPhases } from "./phases.ts";
-import type { AnalysisResponse, Handedness, PoseFrame, View } from "./types.ts";
+import { measureMetricAtPhase, phaseWindowFrames } from "./measurement.ts";
+import type { AnalysisResponse } from "./types.ts";
+
+export { computeMetricValue } from "./measurement.ts";
 
 export type FeedbackStatus = "below" | "within" | "above" | "undetected";
 
@@ -16,6 +18,13 @@ export interface FeedbackItem {
   range: MetricRange | null;
   status: FeedbackStatus;
   source: "published" | "empirical" | null;
+  /**
+   * 0–1 measurement confidence (see measurement.ts) — how cleanly the joints
+   * this metric depends on were seen around the phase. 0 alongside an
+   * undetected item. Surfaced in the UI and used by swingScore.ts to keep a
+   * barely-visible joint from moving the score.
+   */
+  confidence: number;
 }
 
 export interface FeedbackResult {
@@ -36,79 +45,44 @@ export const PHASE_LABELS: Record<Phase, string> = {
   followThrough: "Follow-through",
 };
 
-/**
- * Computes a single metric's value at one frame. Exported so calibration.ts
- * can call the exact same function used here — the empirical benchmarks it
- * produces are guaranteed to be measured the same way a user's swing is
- * later scored.
- */
-export function computeMetricValue(
-  metric: MetricId,
-  frame: PoseFrame,
-  _view: View,
-  handedness: Handedness,
-  aspect: number,
-  addressFrame: PoseFrame | null,
-): number | null {
-  switch (metric) {
-    case "spineTilt":
-      return spineLine(frame.landmarks, aspect)?.angleDeg ?? null;
-    case "shoulderTurn":
-      return shoulderLine(frame.landmarks, handedness, aspect)?.angleDeg ?? null;
-    case "hipTurn":
-      return hipLine(frame.landmarks, handedness, aspect)?.angleDeg ?? null;
-    case "xFactor": {
-      const s = shoulderLine(frame.landmarks, handedness, aspect);
-      const h = hipLine(frame.landmarks, handedness, aspect);
-      return s && h ? s.angleDeg - h.angleDeg : null;
-    }
-    case "planeAngle":
-      return swingPlaneLine(frame.landmarks, handedness, aspect)?.angleDeg ?? null;
-    case "spineRetention": {
-      if (!addressFrame) return null;
-      const atPhase = spineLine(frame.landmarks, aspect)?.angleDeg;
-      const atAddress = spineLine(addressFrame.landmarks, aspect)?.angleDeg;
-      return atPhase !== undefined && atAddress !== undefined && atPhase !== null && atAddress !== null
-        ? Math.abs(atPhase - atAddress)
-        : null;
-    }
-    default:
-      return null;
-  }
-}
-
 function classify(value: number, range: MetricRange): FeedbackStatus {
   if (value < range.min) return "below";
   if (value > range.max) return "above";
   return "within";
 }
 
+/**
+ * Scores every benchmarked metric at address, top, and impact.
+ *
+ * Each value is a short-window median rather than a single-frame read (see
+ * measurement.ts) — the phase frame alone is the noisiest possible sample of
+ * an angle, and a score that swings on one blurred frame isn't a score of the
+ * golfer's swing.
+ */
 export function computeFeedback(analysis: AnalysisResponse, benchmarks: BenchmarkTable): FeedbackResult {
   const phases = detectPhases(analysis.frames, analysis.handedness, analysis.fps);
   const aspect = analysis.width / analysis.height;
-  const addressFrame = phases.address !== null ? analysis.frames[phases.address] : null;
+  const halfWindow = phaseWindowFrames(analysis.fps);
 
   const items: FeedbackItem[] = [];
   for (const phase of SCORED_PHASES) {
     const entries = benchmarks[analysis.view][phase] ?? [];
     const frameIndex = phases[phase];
     for (const entry of entries) {
-      if (frameIndex === null) {
-        items.push({
-          phase,
-          phaseLabel: PHASE_LABELS[phase],
-          frameIndex: null,
-          metric: entry.metric,
-          metricLabel: entry.label,
-          value: null,
-          range: entry.range,
-          status: "undetected",
-          source: entry.source,
-        });
-        continue;
-      }
-      const frame = analysis.frames[frameIndex];
-      const value = computeMetricValue(entry.metric, frame, analysis.view, analysis.handedness, aspect, addressFrame);
+      const measurement =
+        frameIndex === null
+          ? null
+          : measureMetricAtPhase(
+              entry.metric,
+              analysis.frames,
+              frameIndex,
+              analysis.view,
+              analysis.handedness,
+              aspect,
+              phases.address,
+              halfWindow,
+            );
+      const value = measurement?.value ?? null;
       items.push({
         phase,
         phaseLabel: PHASE_LABELS[phase],
@@ -119,6 +93,7 @@ export function computeFeedback(analysis: AnalysisResponse, benchmarks: Benchmar
         range: entry.range,
         status: value === null ? "undetected" : classify(value, entry.range),
         source: entry.source,
+        confidence: measurement?.confidence ?? 0,
       });
     }
   }

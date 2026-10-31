@@ -9,10 +9,22 @@ export interface Landmark {
   visibility: number;
 }
 
+export interface WorldLandmark {
+  x: number;
+  y: number;
+  z: number;
+}
+
 export interface PoseFrame {
   index: number;
   t: number;
   landmarks: Landmark[] | null;
+  // MediaPipe's metric 3D pose (meters, origin at the mid-hip, axes aligned
+  // with the image plane + depth), used for rotation measurements that a
+  // screen-space angle can't make without foreshortening error. Optional so
+  // analyses stored before this field existed still typecheck; see
+  // rotation3d.ts.
+  world_landmarks?: WorldLandmark[] | null;
   // Normalized [0,1] point from the backend's Hough-line club detection
   // (see backend/app/pose.py's _detect_club_tip), or null/absent when no
   // confident line was found — callers fall back to a body-pose-based

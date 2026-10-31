@@ -1,4 +1,5 @@
 import type { FeedbackItem, FeedbackResult } from "./feedback.ts";
+import { MIN_SCORE_CONFIDENCE } from "./measurement.ts";
 
 export type ScoreBand = "good" | "fair" | "poor";
 
@@ -17,10 +18,13 @@ const OVERSHOOT_TOLERANCE = 1;
  * decaying linearly to 0 as it misses by up to a full range-width, matching
  * the below/within/above classification computeFeedback already produces.
  * Null (excluded from the average, not scored as 0) when the metric or its
- * range couldn't be measured at all.
+ * range couldn't be measured at all — or when it was measured but only from
+ * joints the detector barely saw (see MIN_SCORE_CONFIDENCE). A reading that
+ * uncertain is still shown, it just doesn't get to move the score.
  */
 function metricScore(item: FeedbackItem): number | null {
   if (item.status === "undetected" || item.value === null || item.range === null) return null;
+  if (item.confidence < MIN_SCORE_CONFIDENCE) return null;
   if (item.status === "within") return 100;
   const { min, max } = item.range;
   const width = Math.max(max - min, 1e-6);

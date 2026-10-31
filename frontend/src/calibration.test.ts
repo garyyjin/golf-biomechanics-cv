@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { computeSwingSamples } from "./calibration";
-import { computeMetricValue } from "./feedback";
+import { measureMetricAtPhase, phaseWindowFrames } from "./measurement";
 import {
   LEFT_HIP,
   LEFT_SHOULDER,
@@ -68,7 +68,7 @@ function makeAnalysis(frames: PoseFrame[], view: AnalysisResponse["view"] = "fac
 }
 
 describe("computeSwingSamples", () => {
-  it("cross-checks each sample's value against computeMetricValue for the same frame", () => {
+  it("cross-checks each sample's value against the phase measurement it scores with", () => {
     const frames = makeSwingFrames(CLEAN_SWING_Y, FPS);
     const analysis = makeAnalysis(frames);
     const samples = computeSwingSamples(analysis);
@@ -77,20 +77,22 @@ describe("computeSwingSamples", () => {
 
     const aspect = analysis.width / analysis.height;
     const phases = detectPhases(frames, analysis.handedness, analysis.fps);
-    const addressFrame = phases.address !== null ? frames[phases.address] : null;
+    const halfWindow = phaseWindowFrames(analysis.fps);
 
     for (const sample of samples) {
       const frameIndex = phases[sample.phase];
       expect(frameIndex).not.toBeNull();
-      const expected = computeMetricValue(
+      const expected = measureMetricAtPhase(
         sample.metric,
-        frames[frameIndex!],
+        frames,
+        frameIndex!,
         analysis.view,
         analysis.handedness,
         aspect,
-        addressFrame,
+        phases.address,
+        halfWindow,
       );
-      expect(sample.value).toBeCloseTo(expected!, 6);
+      expect(sample.value).toBeCloseTo(expected.value!, 6);
     }
   });
 

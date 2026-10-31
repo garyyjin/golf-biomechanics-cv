@@ -15,6 +15,7 @@ function item(overrides: Partial<FeedbackItem>): FeedbackItem {
     range: { min: 4, max: 15 },
     status: "within",
     source: "published",
+    confidence: 1,
     ...overrides,
   };
 }
@@ -68,6 +69,17 @@ describe("computeSwingScore", () => {
       result([item({ status: "within" }), item({ status: "undetected", value: null, range: null })]),
     );
     expect(withinScore.overall).toBe(100);
+  });
+
+  it("excludes a low-confidence reading instead of letting it move the score", () => {
+    const score = computeSwingScore(
+      result([
+        item({ status: "within" }),
+        // Measured, but only from joints the detector barely saw.
+        item({ status: "below", value: -8, range: { min: 4, max: 15 }, confidence: 0.3 }),
+      ]),
+    );
+    expect(score.overall).toBe(100);
   });
 
   it("returns null when nothing could be scored", () => {

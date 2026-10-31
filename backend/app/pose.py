@@ -206,6 +206,14 @@ def analyze_video(
     *position* there, though its *size* is scanned across the whole clip for
     calibration.
 
+    Also carries world_landmarks — MediaPipe's metric 3D pose (33 points, in
+    meters, origin at the mid-hip), or None when no pose was detected or the
+    model didn't report one. Distinct from `landmarks`, which is 2D image
+    normalized to [0,1]: world_landmarks is what lets the frontend measure
+    rotation about the body's vertical axis without the foreshortening error
+    a screen-space angle picks up whenever a turn points partly toward the
+    camera.
+
     on_progress(current_index, total_frames), if given, is called after each
     frame is processed — total_frames comes from CAP_PROP_FRAME_COUNT, which
     OpenCV can misreport for some containers/codecs, so callers should treat
@@ -270,6 +278,7 @@ def analyze_video(
                 height, width = frame.shape[:2]
             result = pose.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
             landmarks = None
+            world_landmarks = None
             club_tip = None
             if result.pose_landmarks is not None:
                 landmarks = [
@@ -282,6 +291,11 @@ def analyze_video(
                     for lm in result.pose_landmarks.landmark
                 ]
                 club_tip = _detect_club_tip(frame, landmarks, width, height)
+                if result.pose_world_landmarks is not None:
+                    world_landmarks = [
+                        {"x": lm.x, "y": lm.y, "z": lm.z}
+                        for lm in result.pose_world_landmarks.landmark
+                    ]
             hand_point = _wrist_point(landmarks, width, height) if landmarks is not None else None
             club_tip_yolo = detect_club(frame, hand_point)
             ball_tip = detect_ball(frame)
@@ -296,6 +310,7 @@ def analyze_video(
                     "index": index,
                     "t": index / fps,
                     "landmarks": landmarks,
+                    "world_landmarks": world_landmarks,
                     "club_tip": club_tip,
                     "club_tip_yolo": club_tip_yolo,
                     "ball_tip": ball_tip,

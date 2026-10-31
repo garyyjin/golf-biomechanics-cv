@@ -1,6 +1,7 @@
 import { DEFAULT_BENCHMARKS } from "./benchmarks.default.ts";
 import type { MetricId, Phase } from "./benchmarks.ts";
-import { SCORED_PHASES, computeMetricValue } from "./feedback.ts";
+import { SCORED_PHASES } from "./feedback.ts";
+import { measureMetricAtPhase, phaseWindowFrames } from "./measurement.ts";
 import { detectPhases } from "./phases.ts";
 import type { AnalysisResponse } from "./types.ts";
 
@@ -12,29 +13,31 @@ export interface SwingSample {
 
 /**
  * Turns one already-analyzed reference swing into a flat list of calibration
- * samples, using the exact same detectPhases/computeMetricValue functions
- * that later score a user's swing — the empirical benchmarks this feeds are
- * guaranteed to be measured the same way they're later compared against.
+ * samples, using the exact same detectPhases/measureMetricAtPhase path that
+ * later scores a user's swing — including the same short-window median, so a
+ * benchmark range and the reading it's compared against are measured the same
+ * way.
  */
 export function computeSwingSamples(analysis: AnalysisResponse): SwingSample[] {
   const aspect = analysis.width / analysis.height;
   const phases = detectPhases(analysis.frames, analysis.handedness, analysis.fps);
-  const addressFrame = phases.address !== null ? analysis.frames[phases.address] : null;
+  const halfWindow = phaseWindowFrames(analysis.fps);
 
   const samples: SwingSample[] = [];
   for (const phase of SCORED_PHASES) {
     const frameIndex = phases[phase];
     if (frameIndex === null) continue;
-    const frame = analysis.frames[frameIndex];
     const metricEntries = DEFAULT_BENCHMARKS[analysis.view][phase] ?? [];
     for (const metricEntry of metricEntries) {
-      const value = computeMetricValue(
+      const { value } = measureMetricAtPhase(
         metricEntry.metric,
-        frame,
+        analysis.frames,
+        frameIndex,
         analysis.view,
         analysis.handedness,
         aspect,
-        addressFrame,
+        phases.address,
+        halfWindow,
       );
       if (value !== null) samples.push({ phase, metric: metricEntry.metric, value });
     }
