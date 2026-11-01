@@ -29,7 +29,8 @@ class _FakeModel:
     def __init__(self, boxes: list[_FakeBox]):
         self._boxes = boxes
 
-    def predict(self, frame_bgr, verbose=False):
+    # imgsz mirrors the real batched call; the fake ignores inference knobs.
+    def predict(self, frame_bgr, imgsz=None, verbose=False):
         return [_FakeResult(self._boxes)]
 
 

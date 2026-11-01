@@ -24,6 +24,12 @@ from typing import Any
 MODEL_PATH = Path(__file__).resolve().parent / "models" / "clubhead.pt"
 CONFIDENCE_THRESHOLD = 0.25
 
+# Inference size passed to ultralytics (which letterboxes to a square).
+# Deliberately the model's trained 640: dropping it makes each pass cheaper
+# but starts costing small/distant clubhead detections, and the clubhead is
+# the one thing this model exists to find.
+IMG_SIZE = 640
+
 # Torch defaults to one thread per core, which badly oversubscribes a single
 # 640px input: measured on a 16-thread machine, one detection takes ~36 ms with
 # four threads but ~75-88 ms with sixteen. Four is also what leaves the rest of
@@ -73,6 +79,59 @@ def _tip_from_box(
     return center_x + ux * half_extent, center_y + uy * half_extent
 
 
+def _best_box(result: Any) -> tuple[float, float, float, float] | None:
+    """Highest-confidence xyxy box in one frame's result, or None."""
+    best_confidence = CONFIDENCE_THRESHOLD
+    best_box: tuple[float, float, float, float] | None = None
+    for box in result.boxes:
+        confidence = float(box.conf[0])
+        if confidence <= best_confidence:
+            continue
+        best_confidence = confidence
+        best_box = tuple(box.xyxy[0].tolist())
+    return best_box
+
+
+def detect_club_batch(
+    frames_bgr: list[Any], hand_points: list[tuple[float, float] | None] | None = None
+) -> list[dict[str, float] | None]:
+    """Clubhead detection for a batch of frames, one result per frame.
+
+    Batched rather than one frame per call because a YOLOv8n forward pass at
+    640px is dominated by per-call overhead, not by the image: on real footage
+    one frame per call measures ~64 ms, while a batch of eight measures ~24 ms
+    per frame — and the detections agree exactly with the single-frame path
+    (verified across 24 frames), so this is free speed rather than a tradeoff
+    against accuracy. Extra torch threads, or several model instances aimed at
+    the same frames, buy nothing: the pass is CPU-bound and saturates at that
+    ~24 ms figure.
+
+    hand_points, if given, is one pixel-space grip position per frame (see
+    pose.py's wrist selection), used to project each box onto the far edge
+    of the clubhead (see _tip_from_box). Entries may be None for frames with
+    no pose, which falls back to the box center.
+    """
+    model = _load_model()
+    if model is None or not frames_bgr:
+        return [None] * len(frames_bgr)
+
+    if hand_points is None:
+        hand_points = [None] * len(frames_bgr)
+
+    height, width = frames_bgr[0].shape[:2]
+    results = model.predict(list(frames_bgr), imgsz=IMG_SIZE, verbose=False)
+
+    detections: list[dict[str, float] | None] = []
+    for result, hand_point in zip(results, hand_points):
+        best_box = _best_box(result)
+        if best_box is None:
+            detections.append(None)
+            continue
+        point_x, point_y = _tip_from_box(best_box, hand_point)
+        detections.append({"x": point_x / width, "y": point_y / height})
+    return detections
+
+
 def detect_club(
     frame_bgr: Any, hand_point: tuple[float, float] | None = None
 ) -> dict[str, float] | None:
@@ -86,26 +145,8 @@ def detect_club(
     of the clubhead that actually strikes the ball, not its center. Falls back
     to the box center when no hand position is available (e.g. no pose
     landmarks this frame).
+
+    Single-frame convenience wrapper over detect_club_batch; callers working
+    through a clip should use the batch form, which is far cheaper per frame.
     """
-    model = _load_model()
-    if model is None:
-        return None
-
-    height, width = frame_bgr.shape[:2]
-    results = model.predict(frame_bgr, verbose=False)
-
-    best_confidence = CONFIDENCE_THRESHOLD
-    best_box: tuple[float, float, float, float] | None = None
-    for result in results:
-        for box in result.boxes:
-            confidence = float(box.conf[0])
-            if confidence <= best_confidence:
-                continue
-            best_confidence = confidence
-            best_box = tuple(box.xyxy[0].tolist())
-
-    if best_box is None:
-        return None
-
-    point_x, point_y = _tip_from_box(best_box, hand_point)
-    return {"x": point_x / width, "y": point_y / height}
+    return detect_club_batch([frame_bgr], [hand_point])[0]

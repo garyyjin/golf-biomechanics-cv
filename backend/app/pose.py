@@ -10,8 +10,8 @@ from collections.abc import Callable
 import cv2
 import mediapipe as mp
 
-from app.ball import detect_ball
-from app.club import detect_club
+from app.ball import detect_ball_batch
+from app.club import detect_club_batch
 
 logger = logging.getLogger(__name__)
 
@@ -241,20 +241,39 @@ def _extract_pose(pose, frame, index: int, fps: float, width: int, height: int) 
     }
 
 
-def _attach_detectors(record: dict, frame, width: int, height: int) -> dict:
-    """Add the two YOLO readings to a finished pose record.
+# Frames per batched detector pass. Eight is where the YOLOv8n forward pass
+# stops paying a meaningful per-call tax on this project's footage (~64 ->
+# ~24 ms/frame); larger batches flatten out while holding more decoded frames
+# in memory.
+_DETECTOR_BATCH = 8
 
-    Kept off the pose workers on purpose: the club anchor needs the wrist
-    from this frame's landmarks, and the YOLO models are a single shared
-    Torch graph that isn't safe to call from several threads at once. The
-    collector therefore runs both detectors itself, in arrival order — the
-    record is filed by frame index afterwards, so the order doesn't matter.
+
+def _attach_detectors(records: list[dict], frames: list, width: int, height: int) -> None:
+    """Add the two YOLO readings to a batch of finished pose records.
+
+    Kept off the pose workers on purpose: the club anchor needs the wrist from
+    each frame's landmarks, and the YOLO models are a single shared Torch
+    graph that isn't safe to call from several threads at once. The collector
+    therefore runs both detectors itself, in arrival order — records are filed
+    by frame index afterwards, so the order they were detected in is
+    irrelevant.
+
+    Detections run as a batch rather than a frame at a time because that is
+    roughly 2.7x cheaper per frame on the same pixels (see
+    app/club.py's detect_club_batch), which now makes the detectors, not pose
+    extraction, the thing the clip's wall time is set by.
     """
-    landmarks = record["landmarks"]
-    hand_point = _wrist_point(landmarks, width, height) if landmarks is not None else None
-    record["club_tip_yolo"] = detect_club(frame, hand_point)
-    record["ball_tip"] = detect_ball(frame)
-    return record
+    hand_points = [
+        _wrist_point(record["landmarks"], width, height)
+        if record["landmarks"] is not None
+        else None
+        for record in records
+    ]
+    clubs = detect_club_batch(frames, hand_points)
+    balls = detect_ball_batch(frames)
+    for record, club, ball in zip(records, clubs, balls):
+        record["club_tip_yolo"] = club
+        record["ball_tip"] = ball
 
 
 def _worker_count() -> int:
@@ -283,7 +302,8 @@ def _analyze_sequential(
         frame = first_frame
         while frame is not None:
             record = _extract_pose(pose, frame, index, fps, width, height)
-            frames.append(_attach_detectors(record, frame, width, height))
+            _attach_detectors([record], [frame], width, height)
+            frames.append(record)
             index += 1
             if on_progress is not None:
                 on_progress(index, total_frames)
@@ -304,12 +324,13 @@ def _analyze_parallel(
     Consecutive frames per worker keep each tracker's history intact.
 
     The split follows what each stage costs on a 1080x1920 clip: pose is
-    ~205 ms/frame and parallelises well, while the YOLO detections are ~36 ms
-    and must stay on one thread anyway (a single shared Torch graph, plus they
-    need this frame's wrist landmarks as an anchor). They run here as records
-    come back. A bounded results queue keeps only a handful of decoded frames
-    alive at once, and records are re-ordered here so `frames` and on_progress
-    stay strictly in index order regardless of which worker finished first.
+    ~205 ms/frame and parallelises well, while the YOLO detections stay on one
+    thread (a single shared Torch graph, plus they need this frame's wrist
+    landmarks as an anchor) at ~24 ms/frame in batches of eight. Those
+    batches run here as records come back. A bounded results queue keeps only
+    a handful of decoded frames alive at once, and records are re-ordered here
+    so `frames` and on_progress stay strictly in index order regardless of
+    which worker finished first.
     """
     chunk = max(1, math.ceil(total_frames / workers))
     results: queue.Queue = queue.Queue(maxsize=workers * 2)
@@ -374,9 +395,41 @@ def _analyze_parallel(
 
     frames: list[dict] = []
     order: dict[int, dict] = {}
-    next_index = 0
+    completed = 0
     finished_workers = 0
     error: BaseException | None = None
+    pending: list[tuple[dict, object]] = []
+
+    def flush() -> None:
+        """Run the detectors over the frames collected so far, then file
+        them and report progress.
+
+        Progress still fires once per frame rather than once per batch: the
+        count is what the client renders, and holding it back to batch
+        boundaries would make the bar tick in visible steps of eight.
+        """
+        nonlocal completed
+        if not pending:
+            return
+        _attach_detectors(
+            [record for record, _ in pending],
+            [frame for _, frame in pending],
+            width,
+            height,
+        )
+        for record, _ in pending:
+            order[record["index"]] = record
+            # Progress counts frames *finished*, not the length of the
+            # in-order prefix. Workers run contiguous slices in parallel, so
+            # their records arrive out of order and holding the count back
+            # until the prefix caught up made the client's bar sit still
+            # through most of a clip and then jump from ~3% to 100% as the
+            # tail flushed in.
+            completed += 1
+            if on_progress is not None:
+                on_progress(completed, total_frames)
+        pending.clear()
+
     while finished_workers < workers:
         item = results.get()
         if item is _WORKER_DONE:
@@ -386,20 +439,22 @@ def _analyze_parallel(
         if key is _ERROR:
             error = error or payload
             continue
-        index = key
-        _attach_detectors(payload, frame, width, height)
-        order[index] = payload
-        while next_index in order:
-            frames.append(order.pop(next_index))
-            next_index += 1
-            if on_progress is not None:
-                on_progress(next_index, total_frames)
+        pending.append((payload, frame))
+        if len(pending) >= _DETECTOR_BATCH:
+            flush()
+
+    # Workers can leave a partial batch behind.
+    flush()
 
     for thread in pool:
         thread.join()
 
     if error is not None:
         raise error
+
+    # Filed by index, not by arrival: workers finish in whatever order the
+    # scheduler gives them, but the frame stream has to be playable.
+    frames = [order[index] for index in sorted(order)]
     return frames
 
 

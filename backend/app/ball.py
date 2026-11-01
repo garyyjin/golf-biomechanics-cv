@@ -30,6 +30,47 @@ def _load_model() -> Any | None:
     return YOLO(str(MODEL_PATH))
 
 
+def detect_ball_batch(frames_bgr: list[Any]) -> list[dict[str, float] | None]:
+    """Ball detection for a batch of frames, one result per frame.
+
+    Batched for the same reason as app/club.py's detect_club_batch: a single
+    YOLOv8n pass is mostly per-call overhead, so eight frames at once cost
+    roughly what one frame per call used to.
+    """
+    model = _load_model()
+    if model is None or not frames_bgr:
+        return [None] * len(frames_bgr)
+
+    height, width = frames_bgr[0].shape[:2]
+    results = model.predict(list(frames_bgr), verbose=False)
+
+    detections: list[dict[str, float] | None] = []
+    for result in results:
+        best_confidence = CONFIDENCE_THRESHOLD
+        best_box: tuple[float, float, float, float] | None = None
+        for box in result.boxes:
+            confidence = float(box.conf[0])
+            if confidence <= best_confidence:
+                continue
+            best_confidence = confidence
+            best_box = tuple(box.xyxy[0].tolist())
+
+        if best_box is None:
+            detections.append(None)
+            continue
+
+        x1, y1, x2, y2 = best_box
+        detections.append(
+            {
+                "x": (x1 + x2) / 2 / width,
+                "y": (y1 + y2) / 2 / height,
+                "width": (x2 - x1) / width,
+                "height": (y2 - y1) / height,
+            }
+        )
+    return detections
+
+
 def detect_ball(frame_bgr: Any) -> dict[str, float] | None:
     """Highest-confidence ball detection in this frame as a normalized [0,1]
     {"x", "y", "width", "height"} box, or None if no model is installed or
@@ -42,31 +83,7 @@ def detect_ball(frame_bgr: Any) -> dict[str, float] | None:
     real diameter is a known constant, so its on-screen box size doubles as
     a distance-calibration reference (see frontend/src/stats.ts's
     inchesPerNormalizedUnitFromBall) independent of which club was used.
+
+    Single-frame convenience wrapper over detect_ball_batch.
     """
-    model = _load_model()
-    if model is None:
-        return None
-
-    height, width = frame_bgr.shape[:2]
-    results = model.predict(frame_bgr, verbose=False)
-
-    best_confidence = CONFIDENCE_THRESHOLD
-    best_box: tuple[float, float, float, float] | None = None
-    for result in results:
-        for box in result.boxes:
-            confidence = float(box.conf[0])
-            if confidence <= best_confidence:
-                continue
-            best_confidence = confidence
-            best_box = tuple(box.xyxy[0].tolist())
-
-    if best_box is None:
-        return None
-
-    x1, y1, x2, y2 = best_box
-    return {
-        "x": (x1 + x2) / 2 / width,
-        "y": (y1 + y2) / 2 / height,
-        "width": (x2 - x1) / width,
-        "height": (y2 - y1) / height,
-    }
+    return detect_ball_batch([frame_bgr])[0]

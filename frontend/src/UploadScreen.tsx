@@ -1,6 +1,7 @@
-import { useState } from "react";
-import { analyzeVideo, pollAnalysisJob } from "./api";
-import type { AnalysisJobHandle } from "./api";
+import { useRef, useState } from "react";
+import { AnalysisLoader } from "./AnalysisLoader";
+import { analyzeVideo, pollAnalysisJob, UPLOAD_SHARE } from "./api";
+import type { AnalysisJobHandle, AnalysisProgress } from "./api";
 import { FileField } from "./FileField";
 import type { AnalysisResponse, Handedness, Quality, View } from "./types";
 
@@ -23,6 +24,53 @@ const QUALITY_OPTIONS: { value: Quality; label: string }[] = [
   { value: "accurate", label: "Accurate" },
 ];
 
+const PROCESSING_LABEL: Record<AnalysisProgress["stage"], string> = {
+  uploading: "Uploading…",
+  analyzing: "Analyzing…",
+  saving: "Finishing…",
+};
+
+/**
+ * Seconds left, from how fast frames are actually being finished.
+ *
+ * Measured against the previous report rather than the run's start: extraction
+ * speeds up once the models are warm and slows again through the dense model
+ * passes, so a rate taken from the beginning would keep quoting a number that
+ * stopped being true. The estimate is smoothed so it doesn't jitter on the
+ * frame to frame noise of a single poll interval.
+ */
+function useFrameRateEta() {
+  const last = useRef<{ at: number; frames: number } | null>(null);
+  const smoothed = useRef<number | null>(null);
+
+  function reset() {
+    last.current = null;
+    smoothed.current = null;
+  }
+
+  /** Returns the updated estimate; call with the newest progress report. */
+  function update(progress: AnalysisProgress): number | null {
+    const done = progress.framesDone ?? 0;
+    const total = progress.framesTotal ?? 0;
+    // Not extracting, or still loading models: no rate to measure yet.
+    if (progress.stage !== "analyzing" || !total || !done) {
+      return smoothed.current;
+    }
+
+    const now = performance.now();
+    const previous = last.current;
+    if (previous && done > previous.frames) {
+      const secondsPerFrame = (now - previous.at) / 1000 / (done - previous.frames);
+      const raw = (total - done) * secondsPerFrame;
+      smoothed.current = smoothed.current === null ? raw : smoothed.current * 0.6 + raw * 0.4;
+    }
+    last.current = { at: now, frames: done };
+    return smoothed.current;
+  }
+
+  return { update, reset };
+}
+
 export function UploadScreen({ onAnalyzed }: Props) {
   const [file, setFile] = useState<File | null>(null);
   const [view, setView] = useState<View | null>(null);
@@ -33,16 +81,32 @@ export function UploadScreen({ onAnalyzed }: Props) {
   const [handedness, setHandedness] = useState<Handedness>("right");
   const [quality, setQuality] = useState<Quality>("accurate");
   const [processing, setProcessing] = useState(false);
-  const [progress, setProgress] = useState(0);
+  const [progress, setProgress] = useState<AnalysisProgress>({ percent: 0, stage: "uploading" });
+  const [etaSeconds, setEtaSeconds] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [job, setJob] = useState<AnalysisJobHandle | null>(null);
+  const eta = useFrameRateEta();
 
   const ready = file !== null && view !== null && !processing;
+
+  /** Every progress report from the API funnels through here, so the bar and
+   * the remaining-time estimate can never disagree about where the run is. */
+  function reportProgress(next: AnalysisProgress) {
+    setProgress(next);
+    if (next.stage === "uploading") {
+      eta.reset();
+      setEtaSeconds(null);
+      return;
+    }
+    setEtaSeconds(next.stage === "analyzing" ? eta.update(next) : null);
+  }
 
   async function submit() {
     if (!file || !view || !handedness || !quality) return;
     setProcessing(true);
-    setProgress(0);
+    eta.reset();
+    setEtaSeconds(null);
+    setProgress({ percent: 0, stage: "uploading" });
     setError(null);
     setJob(null);
     try {
@@ -51,7 +115,7 @@ export function UploadScreen({ onAnalyzed }: Props) {
         view,
         handedness,
         quality,
-        setProgress,
+        reportProgress,
         setJob,
       );
       onAnalyzed(file, analysis, swingId);
@@ -68,8 +132,11 @@ export function UploadScreen({ onAnalyzed }: Props) {
     if (!file || !job) return;
     setProcessing(true);
     setError(null);
+    eta.reset();
+    setEtaSeconds(null);
+    setProgress({ percent: UPLOAD_SHARE, stage: "analyzing" });
     try {
-      const analysis = await pollAnalysisJob(job.jobId, setProgress);
+      const analysis = await pollAnalysisJob(job.jobId, reportProgress);
       onAnalyzed(file, analysis, job.swingId);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Analysis failed");
@@ -150,17 +217,9 @@ export function UploadScreen({ onAnalyzed }: Props) {
       </div>
 
       <button type="button" className="submit" disabled={!ready} onClick={submit}>
-        {processing ? "Analyzing…" : "Analyze swing"}
+        {processing ? PROCESSING_LABEL[progress.stage] : "Analyze swing"}
       </button>
-      {processing && (
-        <>
-          <div className="progress-bar" role="progressbar" aria-valuenow={Math.round(progress)} aria-valuemin={0} aria-valuemax={100}>
-            <div className="progress-bar-fill" style={{ width: `${progress}%` }} />
-            <span className="progress-bar-label">{Math.round(progress)}%</span>
-          </div>
-          <p className="hint">Extracting pose landmarks — this can take a moment.</p>
-        </>
-      )}
+      {processing && <AnalysisLoader progress={progress} etaSeconds={etaSeconds} />}
       {error && (
         <div className="error-row">
           <p className="error">{error}</p>

@@ -29,7 +29,9 @@ class _FakeModel:
     def __init__(self, boxes: list[_FakeBox]):
         self._boxes = boxes
 
-    def predict(self, frame_bgr, verbose=False):
+    # imgsz mirrors the real call in club.detect_club_batch; the fake ignores
+    # it (and every other inference knob) and returns its canned boxes.
+    def predict(self, frame_bgr, imgsz=None, verbose=False):
         return [_FakeResult(self._boxes)]
 
 
